@@ -2,6 +2,8 @@ import os
 import time
 import threading
 import datetime
+import subprocess
+import sys
 import customtkinter as ctk
 from tkinter import messagebox
 from PIL import Image
@@ -100,6 +102,96 @@ class CollapsibleFrame(ctk.CTkFrame):
             self.toggle_btn.configure(text=f"▶  {self.title}")
             self.collapsed = True
 
+class ExecutionModeDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Modo de Execução")
+        self.geometry("380x220")
+        self.resizable(False, False)
+        self.configure(fg_color="#000000")
+        self.result = None # 'browser', 'derivclicker', or None
+        
+        self.transient(parent)
+        self.grab_set()
+        
+        # Centraliza a janela em relação ao pai
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_w = parent.winfo_width()
+        parent_h = parent.winfo_height()
+        x = parent_x + (parent_w - 380) // 2
+        y = parent_y + (parent_h - 220) // 2
+        self.geometry(f"+{x}+{y}")
+        
+        lbl = ctk.CTkLabel(
+            self, 
+            text="Como deseja executar o robô?", 
+            font=ctk.CTkFont(size=16, weight="bold"), 
+            text_color="#ffffff"
+        )
+        lbl.pack(pady=(20, 10))
+        
+        desc = ctk.CTkLabel(
+            self, 
+            text="Selecione o modo de navegação para a Deriv:", 
+            font=ctk.CTkFont(size=12), 
+            text_color="gray"
+        )
+        desc.pack(pady=(0, 20))
+        
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20)
+        
+        btn_browser = ctk.CTkButton(
+            btn_frame, 
+            text="🌐 NAVEGADOR", 
+            fg_color="#1e293b", 
+            hover_color="#334155", 
+            font=ctk.CTkFont(size=12, weight="bold"),
+            width=160,
+            height=40,
+            command=self.select_browser
+        )
+        btn_browser.pack(side="left", padx=5, expand=True)
+        
+        btn_dc = ctk.CTkButton(
+            btn_frame, 
+            text="🤖 DERIVCLICKER", 
+            fg_color="#10b981", 
+            hover_color="#059669", 
+            font=ctk.CTkFont(size=12, weight="bold"),
+            width=160,
+            height=40,
+            command=self.select_derivclicker
+        )
+        btn_dc.pack(side="right", padx=5, expand=True)
+        
+        btn_cancel = ctk.CTkButton(
+            self, 
+            text="Cancelar", 
+            fg_color="transparent", 
+            hover_color="#1e293b", 
+            text_color="gray", 
+            width=100,
+            height=30,
+            command=self.cancel
+        )
+        btn_cancel.pack(pady=(20, 10))
+        
+        parent.wait_window(self)
+        
+    def select_browser(self):
+        self.result = "browser"
+        self.destroy()
+        
+    def select_derivclicker(self):
+        self.result = "derivclicker"
+        self.destroy()
+        
+    def cancel(self):
+        self.result = None
+        self.destroy()
+
 class AppGui(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -126,6 +218,7 @@ class AppGui(ctk.CTk):
         self.bot = None
         self.hotkey_listener = None
         self.overlay = None
+        self.webview_proc = None
         self.stop_reason = None
         self.settings_win = None
         
@@ -1215,9 +1308,29 @@ class AppGui(ctk.CTk):
             messagebox.showerror("Erro de Arquivo", f"Não foi possível iniciar. A imagem de referência do botão não foi encontrada em: {btn_path}")
             return
             
+        # Dialogo de escolha de modo de navegacao
+        dialog = ExecutionModeDialog(self)
+        mode = dialog.result
+        
+        if not mode:
+            return
+            
         self._gui_setting_changed()  # Salva tudo antes de iniciar
         self.stop_reason = None
         
+        if mode == "derivclicker":
+            try:
+                if getattr(sys, 'frozen', False):
+                    cmd = [sys.executable, "--webview"]
+                else:
+                    cmd = [sys.executable, sys.argv[0], "--webview"]
+                self.webview_proc = subprocess.Popen(cmd)
+                self.log_message("Navegador embutido DERIVCLICKER iniciado com sucesso.")
+            except Exception as e:
+                self.log_message(f"Erro ao iniciar navegador embutido: {e}")
+                messagebox.showerror("Erro de Inicialização", f"Não foi possível iniciar o navegador embutido: {e}")
+                return
+                
         is_scheduled = self.switch_schedule.get() == 1
         if is_scheduled:
             self.lbl_status_value.configure(text="AGENDADO", text_color=ACCENT_YELLOW)
@@ -1278,6 +1391,14 @@ class AppGui(ctk.CTk):
             self.bot.stop_bot()
             self.bot = None
             
+        if self.webview_proc:
+            try:
+                self.webview_proc.terminate()
+                self.webview_proc = None
+                self.log_message("Navegador embutido DERIVCLICKER encerrado.")
+            except Exception:
+                pass
+                
         self.lbl_status_value.configure(text="PARADO", text_color=ACCENT_RED)
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
@@ -1304,6 +1425,15 @@ class AppGui(ctk.CTk):
         self.btn_stop.configure(state="disabled")
         self.lbl_next_click.configure(text="Inativo", text_color="gray")
         self.bot = None
+        
+        if self.webview_proc:
+            try:
+                self.webview_proc.terminate()
+                self.webview_proc = None
+                self.log_message("Navegador embutido DERIVCLICKER encerrado.")
+            except Exception:
+                pass
+                
         self._update_overlay_data()
 
     def _on_stop_limit(self, limit_type, count):
@@ -1770,6 +1900,11 @@ class AppGui(ctk.CTk):
         # Finaliza threads ao fechar a janela
         if self.bot:
             self.bot.stop_bot()
+        if self.webview_proc:
+            try:
+                self.webview_proc.terminate()
+            except Exception:
+                pass
         if self.hotkey_listener:
             self.hotkey_listener.stop()
         super().destroy()
