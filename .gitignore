@@ -10,6 +10,9 @@ deriv_bot.log
 wins_history.csv
 capturas/historico/
 
+# Exclude standalone executable (for GitHub Releases)
+DerivClickerBot.exe
+
 # OS specific files
 Thumbs.db
 Desktop.ini
