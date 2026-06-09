@@ -127,6 +127,7 @@ class AppGui(ctk.CTk):
         self.hotkey_listener = None
         self.overlay = None
         self.stop_reason = None
+        self.settings_win = None
         
         # Reseta streaks
         self.max_win_streak = 0
@@ -287,16 +288,20 @@ class AppGui(ctk.CTk):
         self.entry_seq_wait.delete(0, "end")
         self.entry_seq_wait.insert(0, f"{self.config.get('seq_wait', 20.0):.1f}")
         
-        # Sensibilidade
+        # Sensibilidade (se janela de config estiver aberta)
         sens = self.config.get("sensitivity", 0.8)
-        self.slider_sens.set(sens)
-        self.lbl_sens_val.configure(text=f"{sens:.2f}")
-        
+        if hasattr(self, "settings_slider_sens") and self.settings_slider_sens and self.settings_slider_sens.winfo_exists():
+            self.settings_slider_sens.set(sens)
+        if hasattr(self, "lbl_sens_val") and self.lbl_sens_val and self.lbl_sens_val.winfo_exists():
+            self.lbl_sens_val.configure(text=f"{sens:.2f}")
+            
         # Sensibilidade do Número
         sens_num = self.config.get("sensitivity_number", 0.65)
-        self.slider_sens_num.set(sens_num)
-        self.lbl_sens_num_val.configure(text=f"{sens_num:.2f}")
-        
+        if hasattr(self, "settings_slider_sens_num") and self.settings_slider_sens_num and self.settings_slider_sens_num.winfo_exists():
+            self.settings_slider_sens_num.set(sens_num)
+        if hasattr(self, "lbl_sens_num_val") and self.lbl_sens_num_val and self.lbl_sens_num_val.winfo_exists():
+            self.lbl_sens_num_val.configure(text=f"{sens_num:.2f}")
+            
         # Região de Busca do Número
         use_region = self.config.get("use_search_region", False)
         if use_region:
@@ -333,21 +338,34 @@ class AppGui(ctk.CTk):
             self.frame_finance_target.pack_forget()
             self.frame_finance_free.pack(fill="x", padx=15, pady=(0, 10))
 
-        # Opcoes Extras
-        if self.config.get("play_sounds", True):
-            self.switch_sounds.select()
-        else:
-            self.switch_sounds.deselect()
-            
-        if self.config.get("auto_screenshot", False):
-            self.switch_screenshot.select()
-        else:
-            self.switch_screenshot.deselect()
-            
-        if self.config.get("save_log", True):
-            self.switch_logs.select()
-        else:
-            self.switch_logs.deselect()
+        # Opcoes Extras (Janela de Configurações)
+        play_sounds = self.config.get("play_sounds", True)
+        if hasattr(self, "settings_switch_sounds") and self.settings_switch_sounds and self.settings_switch_sounds.winfo_exists():
+            if play_sounds:
+                self.settings_switch_sounds.select()
+            else:
+                self.settings_switch_sounds.deselect()
+                
+        auto_screenshot = self.config.get("auto_screenshot", False)
+        if hasattr(self, "settings_switch_screenshot") and self.settings_switch_screenshot and self.settings_switch_screenshot.winfo_exists():
+            if auto_screenshot:
+                self.settings_switch_screenshot.select()
+            else:
+                self.settings_switch_screenshot.deselect()
+                
+        save_log = self.config.get("save_log", True)
+        if hasattr(self, "settings_switch_logs") and self.settings_switch_logs and self.settings_switch_logs.winfo_exists():
+            if save_log:
+                self.settings_switch_logs.select()
+            else:
+                self.settings_switch_logs.deselect()
+
+        use_custom_sounds = self.config.get("use_custom_sounds", True)
+        if hasattr(self, "settings_switch_custom_sounds") and self.settings_switch_custom_sounds and self.settings_switch_custom_sounds.winfo_exists():
+            if use_custom_sounds:
+                self.settings_switch_custom_sounds.select()
+            else:
+                self.settings_switch_custom_sounds.deselect()
 
         # Stop Win / Stop Loss
         if self.config.get("enable_stop_win", False):
@@ -365,14 +383,18 @@ class AppGui(ctk.CTk):
         self.entry_stop_loss.insert(0, str(self.config.get("stop_loss", 3)))
 
         # Telegram config loading
-        if self.config.get("telegram_enabled", False):
-            self.switch_telegram.select()
-        else:
-            self.switch_telegram.deselect()
-        self.entry_tg_token.delete(0, "end")
-        self.entry_tg_token.insert(0, self.config.get("telegram_token", ""))
-        self.entry_tg_chat.delete(0, "end")
-        self.entry_tg_chat.insert(0, self.config.get("telegram_chat_id", ""))
+        tg_enabled = self.config.get("telegram_enabled", False)
+        if hasattr(self, "settings_switch_telegram") and self.settings_switch_telegram and self.settings_switch_telegram.winfo_exists():
+            if tg_enabled:
+                self.settings_switch_telegram.select()
+            else:
+                self.settings_switch_telegram.deselect()
+        if hasattr(self, "settings_entry_tg_token") and self.settings_entry_tg_token and self.settings_entry_tg_token.winfo_exists():
+            self.settings_entry_tg_token.delete(0, "end")
+            self.settings_entry_tg_token.insert(0, self.config.get("telegram_token", ""))
+        if hasattr(self, "settings_entry_tg_chat") and self.settings_entry_tg_chat and self.settings_entry_tg_chat.winfo_exists():
+            self.settings_entry_tg_chat.delete(0, "end")
+            self.settings_entry_tg_chat.insert(0, self.config.get("telegram_chat_id", ""))
 
         # Agendamento config loading
         if self.config.get("schedule_enabled", False):
@@ -560,6 +582,19 @@ class AppGui(ctk.CTk):
             command=self.toggle_overlay
         )
         self.btn_overlay.pack(fill="x", padx=15, pady=(15, 0))
+        
+        self.btn_settings = ctk.CTkButton(
+            left_frame, 
+            text="⚙️ CONFIGURAÇÕES", 
+            fg_color="#1e293b", 
+            hover_color="#334155", 
+            border_color="#334155",
+            border_width=1,
+            font=ctk.CTkFont(size=14, weight="bold"), 
+            height=35, 
+            command=self.open_settings_popup
+        )
+        self.btn_settings.pack(fill="x", padx=15, pady=(10, 0))
 
     def _build_right_panel(self):
         # Painel direito — scrollável para não cortar conteúdo
@@ -698,38 +733,12 @@ class AppGui(ctk.CTk):
         self.entry_sched_time.pack(fill="x", pady=2)
         self.entry_sched_time.bind("<KeyRelease>", self._gui_setting_changed)
 
-        # --- OUTRAS CONFIGURACOES (SENSIBILIDADE E SOUND/SCREENSHOT SWITCHES - Agora Recolhível) ---
-        extra_configs = CollapsibleFrame(right_frame, title="Ajustes & Limites do Bot", start_collapsed=True)
-        extra_configs.pack(fill="x", pady=(0, 15))
+        # --- LIMITES DE RISCO (Recolhível) ---
+        limits_frame = CollapsibleFrame(right_frame, title="Limites de Risco (Stop Win / Loss)", start_collapsed=True)
+        limits_frame.pack(fill="x", pady=(0, 15))
         
-        # Sensibilidade OpenCV Geral
-        lbl_sens_title = ctk.CTkLabel(extra_configs.content_frame, text="Sensibilidade Geral (Botões, Win/Loss)", font=ctk.CTkFont(weight="bold"))
-        lbl_sens_title.pack(anchor="w", padx=15, pady=(10, 2))
-        
-        row_sens = ctk.CTkFrame(extra_configs.content_frame, fg_color="transparent")
-        row_sens.pack(fill="x", padx=15, pady=(0, 10))
-        self.slider_sens = ctk.CTkSlider(row_sens, from_=0.5, to=1.0, number_of_steps=50, command=self._slider_sens_changed)
-        self.slider_sens.pack(side="left", fill="x", expand=True)
-        self.lbl_sens_val = ctk.CTkLabel(row_sens, text="0.80", width=50, font=ctk.CTkFont(weight="bold"))
-        self.lbl_sens_val.pack(side="right", padx=(10, 0))
-
-        # Sensibilidade OpenCV do Número
-        lbl_sens_num_title = ctk.CTkLabel(extra_configs.content_frame, text="Sensibilidade do Número (Preço / Sinal)", font=ctk.CTkFont(weight="bold"))
-        lbl_sens_num_title.pack(anchor="w", padx=15, pady=(10, 2))
-
-        row_sens_num = ctk.CTkFrame(extra_configs.content_frame, fg_color="transparent")
-        row_sens_num.pack(fill="x", padx=15, pady=(0, 10))
-        self.slider_sens_num = ctk.CTkSlider(row_sens_num, from_=0.5, to=1.0, number_of_steps=50, command=self._slider_sens_num_changed)
-        self.slider_sens_num.pack(side="left", fill="x", expand=True)
-        self.lbl_sens_num_val = ctk.CTkLabel(row_sens_num, text="0.65", width=50, font=ctk.CTkFont(weight="bold"))
-        self.lbl_sens_num_val.pack(side="right", padx=(10, 0))
-        
-        # Stop Win e Stop Loss limits
-        lbl_stops_title = ctk.CTkLabel(extra_configs.content_frame, text="Limites de Stop Win / Stop Loss (Mensagens)", font=ctk.CTkFont(weight="bold"))
-        lbl_stops_title.pack(anchor="w", padx=15, pady=(10, 2))
-        
-        row_stops = ctk.CTkFrame(extra_configs.content_frame, fg_color="transparent")
-        row_stops.pack(fill="x", padx=15, pady=(2, 5))
+        row_stops = ctk.CTkFrame(limits_frame.content_frame, fg_color="transparent")
+        row_stops.pack(fill="x", padx=15, pady=10)
         
         # Stop Win
         col_stop_win = ctk.CTkFrame(row_stops, fg_color="transparent")
@@ -748,21 +757,8 @@ class AppGui(ctk.CTk):
         self.entry_stop_loss = ctk.CTkEntry(col_stop_loss, width=55, height=26)
         self.entry_stop_loss.pack(side="left")
         self.entry_stop_loss.bind("<KeyRelease>", self._gui_setting_changed)
-        
-        # Toggles Switches
-        row_switches = ctk.CTkFrame(extra_configs.content_frame, fg_color="transparent")
-        row_switches.pack(fill="x", padx=15, pady=(10, 15))
-        
-        self.switch_sounds = ctk.CTkSwitch(row_switches, text="Ativar Sons", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
-        self.switch_sounds.pack(side="left", expand=True, anchor="w", padx=5)
-        
-        self.switch_screenshot = ctk.CTkSwitch(row_switches, text="Screenshot Win", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
-        self.switch_screenshot.pack(side="left", expand=True, anchor="w", padx=5)
-        
-        self.switch_logs = ctk.CTkSwitch(row_switches, text="Gravar Logs", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
-        self.switch_logs.pack(side="left", expand=True, anchor="w", padx=5)
 
-        # --- NOVO: GERENCIAMENTO FINANCEIRO (Recolhível) ---
+        # --- GERENCIAMENTO FINANCEIRO (Recolhível) ---
         finance_frame = CollapsibleFrame(right_frame, title="Gerenciamento Financeiro (Meta / Livre)", start_collapsed=True)
         finance_frame.pack(fill="x", pady=(0, 15))
 
@@ -814,67 +810,6 @@ class AppGui(ctk.CTk):
         self.entry_free_entries = ctk.CTkEntry(self.frame_finance_free, height=28)
         self.entry_free_entries.pack(fill="x", pady=2)
         self.entry_free_entries.bind("<KeyRelease>", self._gui_setting_changed)
-
-        # --- CONFIGURACAO DO TELEGRAM (Agora Recolhível) ---
-        telegram_frame = CollapsibleFrame(right_frame, title="Configurações do Telegram", start_collapsed=True)
-        telegram_frame.pack(fill="x", pady=(0, 15))
-
-
-
-        # Instrução rápida
-        hint_text = "1. Crie um bot via @BotFather e copie o Token\n2. Envie qualquer mensagem para o seu bot no Telegram\n3. Cole o Token abaixo e clique em \"Buscar Chat ID\""
-        ctk.CTkLabel(telegram_frame.content_frame, text=hint_text,
-                     font=ctk.CTkFont(size=11), text_color="#94a3b8",
-                     justify="left").pack(anchor="w", padx=15, pady=(10, 8))
-
-        # Switch de ativação
-        row_tg_enable = ctk.CTkFrame(telegram_frame.content_frame, fg_color="transparent")
-        row_tg_enable.pack(fill="x", padx=15, pady=(0, 6))
-        self.switch_telegram = ctk.CTkSwitch(row_tg_enable, text="Ativar Envio para Telegram",
-                                              progress_color=ACCENT_GREEN,
-                                              command=self._gui_setting_changed)
-        self.switch_telegram.pack(side="left")
-
-        # Token + Chat ID fields
-        row_tg_inputs = ctk.CTkFrame(telegram_frame.content_frame, fg_color="transparent")
-        row_tg_inputs.pack(fill="x", padx=15, pady=(0, 6))
-
-        col_token = ctk.CTkFrame(row_tg_inputs, fg_color="transparent")
-        col_token.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        ctk.CTkLabel(col_token, text="Bot Token API", font=ctk.CTkFont(size=11)).pack(anchor="w")
-        self.entry_tg_token = ctk.CTkEntry(col_token, height=28, placeholder_text="123456789:ABC-...")
-        self.entry_tg_token.pack(fill="x", pady=2)
-        self.entry_tg_token.bind("<KeyRelease>", self._gui_setting_changed)
-
-        col_chat = ctk.CTkFrame(row_tg_inputs, fg_color="transparent")
-        col_chat.pack(side="left", fill="x", expand=True, padx=(5, 0))
-        ctk.CTkLabel(col_chat, text="Chat ID", font=ctk.CTkFont(size=11)).pack(anchor="w")
-        self.entry_tg_chat = ctk.CTkEntry(col_chat, height=28, placeholder_text="Clique em Buscar →")
-        self.entry_tg_chat.pack(fill="x", pady=2)
-        self.entry_tg_chat.bind("<KeyRelease>", self._gui_setting_changed)
-
-        # Botões de ação + status
-        row_tg_actions = ctk.CTkFrame(telegram_frame.content_frame, fg_color="transparent")
-        row_tg_actions.pack(fill="x", padx=15, pady=(2, 12))
-
-        self.btn_fetch_chat_id = ctk.CTkButton(
-            row_tg_actions, text="🔍 Buscar Chat ID", width=140, height=28,
-            font=ctk.CTkFont(size=12),
-            fg_color=ACCENT_BLUE, hover_color="#2563eb",
-            command=self._fetch_chat_id_clicked)
-        self.btn_fetch_chat_id.pack(side="left", padx=(0, 8))
-
-        self.btn_tg_test = ctk.CTkButton(
-            row_tg_actions, text="✉️ Testar", width=90, height=28,
-            font=ctk.CTkFont(size=12),
-            fg_color="#475569", hover_color="#334155",
-            command=self._tg_test_clicked)
-        self.btn_tg_test.pack(side="left", padx=(0, 8))
-
-        self.lbl_tg_status = ctk.CTkLabel(
-            row_tg_actions, text="", font=ctk.CTkFont(size=11),
-            text_color="#94a3b8")
-        self.lbl_tg_status.pack(side="left")
 
         # --- LOG CONSOLE EM TEMPO REAL (Agora Recolhível) ---
         console_frame = CollapsibleFrame(right_frame, title="Logs de Operação em Tempo Real", start_collapsed=True)
@@ -934,11 +869,13 @@ class AppGui(ctk.CTk):
         self._gui_setting_changed()
 
     def _slider_sens_changed(self, val):
-        self.lbl_sens_val.configure(text=f"{val:.2f}")
+        if hasattr(self, "lbl_sens_val") and self.lbl_sens_val and self.lbl_sens_val.winfo_exists():
+            self.lbl_sens_val.configure(text=f"{val:.2f}")
         self._gui_setting_changed()
 
     def _slider_sens_num_changed(self, val):
-        self.lbl_sens_num_val.configure(text=f"{val:.2f}")
+        if hasattr(self, "lbl_sens_num_val") and self.lbl_sens_num_val and self.lbl_sens_num_val.winfo_exists():
+            self.lbl_sens_num_val.configure(text=f"{val:.2f}")
         self._gui_setting_changed()
 
     # --- SALVAR CONFIGURACOES AUTOMATICAMENTE ---
@@ -1004,22 +941,34 @@ class AppGui(ctk.CTk):
         self.config["seq_clicks"] = seq_clicks
         self.config["seq_interval"] = round(seq_interval, 1)
         self.config["seq_wait"] = round(seq_wait, 1)
-        self.config["sensitivity"] = round(self.slider_sens.get(), 2)
-        self.config["sensitivity_number"] = round(self.slider_sens_num.get(), 2)
         self.config["use_search_region"] = self.check_use_region.get() == 1
-        self.config["play_sounds"] = self.switch_sounds.get() == 1
-        self.config["auto_screenshot"] = self.switch_screenshot.get() == 1
-        self.config["save_log"] = self.switch_logs.get() == 1
         
+        # Leitura da janela de configurações se estiver aberta
+        if hasattr(self, "settings_slider_sens") and self.settings_slider_sens and self.settings_slider_sens.winfo_exists():
+            self.config["sensitivity"] = round(self.settings_slider_sens.get(), 2)
+        if hasattr(self, "settings_slider_sens_num") and self.settings_slider_sens_num and self.settings_slider_sens_num.winfo_exists():
+            self.config["sensitivity_number"] = round(self.settings_slider_sens_num.get(), 2)
+        if hasattr(self, "settings_switch_sounds") and self.settings_switch_sounds and self.settings_switch_sounds.winfo_exists():
+            self.config["play_sounds"] = self.settings_switch_sounds.get() == 1
+        if hasattr(self, "settings_switch_screenshot") and self.settings_switch_screenshot and self.settings_switch_screenshot.winfo_exists():
+            self.config["auto_screenshot"] = self.settings_switch_screenshot.get() == 1
+        if hasattr(self, "settings_switch_logs") and self.settings_switch_logs and self.settings_switch_logs.winfo_exists():
+            self.config["save_log"] = self.settings_switch_logs.get() == 1
+        if hasattr(self, "settings_switch_custom_sounds") and self.settings_switch_custom_sounds and self.settings_switch_custom_sounds.winfo_exists():
+            self.config["use_custom_sounds"] = self.settings_switch_custom_sounds.get() == 1
+            
         self.config["enable_stop_win"] = self.check_stop_win.get() == 1
         self.config["stop_win"] = stop_win_val
         self.config["enable_stop_loss"] = self.check_stop_loss.get() == 1
         self.config["stop_loss"] = stop_loss_val
 
         # Telegram Configuration
-        self.config["telegram_enabled"] = self.switch_telegram.get() == 1
-        self.config["telegram_token"] = self.entry_tg_token.get().strip()
-        self.config["telegram_chat_id"] = self.entry_tg_chat.get().strip()
+        if hasattr(self, "settings_switch_telegram") and self.settings_switch_telegram and self.settings_switch_telegram.winfo_exists():
+            self.config["telegram_enabled"] = self.settings_switch_telegram.get() == 1
+        if hasattr(self, "settings_entry_tg_token") and self.settings_entry_tg_token and self.settings_entry_tg_token.winfo_exists():
+            self.config["telegram_token"] = self.settings_entry_tg_token.get().strip()
+        if hasattr(self, "settings_entry_tg_chat") and self.settings_entry_tg_chat and self.settings_entry_tg_chat.winfo_exists():
+            self.config["telegram_chat_id"] = self.settings_entry_tg_chat.get().strip()
         
         # Agendamento
         self.config["schedule_enabled"] = self.switch_schedule.get() == 1
@@ -1032,6 +981,207 @@ class AppGui(ctk.CTk):
         # Se o bot estiver rodando, atualiza a configuracao dele dinamicamente
         if self.bot and self.bot.running:
             self.bot.config = self.config
+
+    def open_settings_popup(self):
+        if self.settings_win is not None and self.settings_win.winfo_exists():
+            self.settings_win.focus()
+            return
+            
+        self.settings_win = ctk.CTkToplevel(self)
+        self.settings_win.title("⚙️ Configurações Avançadas")
+        self.settings_win.geometry("540x650")
+        self.settings_win.resizable(False, False)
+        self.settings_win.transient(self) # Foca no topo da janela principal
+        
+        # Centraliza a janela de configurações na tela
+        self.settings_win.update_idletasks()
+        width = 540
+        height = 650
+        x = self.winfo_x() + (self.winfo_width() // 2) - (width // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (height // 2)
+        self.settings_win.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # Main container
+        main_frame = ctk.CTkFrame(self.settings_win, fg_color="#0f172a")
+        main_frame.pack(fill="both", expand=True)
+        
+        # Header title
+        lbl_header = ctk.CTkLabel(
+            main_frame, 
+            text="⚙️ CONFIGURAÇÕES AVANÇADAS", 
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#f8fafc"
+        )
+        lbl_header.pack(pady=(20, 10))
+        
+        # Scrollable Frame to avoid clipping
+        scroll_frame = ctk.CTkScrollableFrame(main_frame, fg_color="#1e293b", scrollbar_button_color="#475569", scrollbar_button_hover_color="#64748b")
+        scroll_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+        
+        # SECTION 1: SENSIBILIDADE
+        sec1_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
+        sec1_frame.pack(fill="x", padx=10, pady=10)
+        
+        lbl_sec1_title = ctk.CTkLabel(sec1_frame, text="🎯 Sensibilidade OpenCV", font=ctk.CTkFont(size=13, weight="bold"), text_color="#38bdf8")
+        lbl_sec1_title.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # Sensibilidade Geral
+        ctk.CTkLabel(sec1_frame, text="Sensibilidade Geral (Botões, Win/Loss)", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w", padx=15)
+        row_sens = ctk.CTkFrame(sec1_frame, fg_color="transparent")
+        row_sens.pack(fill="x", padx=15, pady=(2, 8))
+        self.settings_slider_sens = ctk.CTkSlider(row_sens, from_=0.5, to=1.0, number_of_steps=50, command=self._slider_sens_changed)
+        self.settings_slider_sens.pack(side="left", fill="x", expand=True)
+        self.lbl_sens_val = ctk.CTkLabel(row_sens, text="0.80", width=40, font=ctk.CTkFont(weight="bold"))
+        self.lbl_sens_val.pack(side="right", padx=(10, 0))
+        
+        # Sensibilidade do Número
+        ctk.CTkLabel(sec1_frame, text="Sensibilidade do Número (Preço / Sinal)", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w", padx=15)
+        row_sens_num = ctk.CTkFrame(sec1_frame, fg_color="transparent")
+        row_sens_num.pack(fill="x", padx=15, pady=(2, 12))
+        self.settings_slider_sens_num = ctk.CTkSlider(row_sens_num, from_=0.5, to=1.0, number_of_steps=50, command=self._slider_sens_num_changed)
+        self.settings_slider_sens_num.pack(side="left", fill="x", expand=True)
+        self.lbl_sens_num_val = ctk.CTkLabel(row_sens_num, text="0.65", width=40, font=ctk.CTkFont(weight="bold"))
+        self.lbl_sens_num_val.pack(side="right", padx=(10, 0))
+
+        # SECTION 2: AUDIO E SONS
+        sec2_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
+        sec2_frame.pack(fill="x", padx=10, pady=10)
+        
+        lbl_sec2_title = ctk.CTkLabel(sec2_frame, text="🔊 Avisos Sonoros & Recursos", font=ctk.CTkFont(size=13, weight="bold"), text_color="#38bdf8")
+        lbl_sec2_title.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        self.settings_switch_sounds = ctk.CTkSwitch(sec2_frame, text="Ativar Sons de Eventos", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_sounds.pack(anchor="w", padx=15, pady=4)
+        
+        self.settings_switch_custom_sounds = ctk.CTkSwitch(sec2_frame, text="Usar Sons Personalizados (.mp3)", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_custom_sounds.pack(anchor="w", padx=15, pady=4)
+        
+        # Testador de Sons
+        row_sound_test = ctk.CTkFrame(sec2_frame, fg_color="transparent")
+        row_sound_test.pack(fill="x", padx=15, pady=(8, 12))
+        self.settings_sound_test_combo = ctk.CTkComboBox(row_sound_test, values=["Entrada", "Vitória", "Derrota", "Início", "Stop Win", "Stop Loss"], height=28)
+        self.settings_sound_test_combo.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        btn_test_sound = ctk.CTkButton(row_sound_test, text="▶ Testar", width=80, height=28, command=self._test_sound, fg_color="#475569", hover_color="#334155")
+        btn_test_sound.pack(side="right")
+
+        # SECTION 3: TELEGRAM
+        sec3_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
+        sec3_frame.pack(fill="x", padx=10, pady=10)
+        
+        lbl_sec3_title = ctk.CTkLabel(sec3_frame, text="💬 Notificações do Telegram", font=ctk.CTkFont(size=13, weight="bold"), text_color="#38bdf8")
+        lbl_sec3_title.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        self.settings_switch_telegram = ctk.CTkSwitch(sec3_frame, text="Ativar Envio para Telegram", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_telegram.pack(anchor="w", padx=15, pady=4)
+        
+        row_tg_inputs = ctk.CTkFrame(sec3_frame, fg_color="transparent")
+        row_tg_inputs.pack(fill="x", padx=15, pady=6)
+        
+        col_token = ctk.CTkFrame(row_tg_inputs, fg_color="transparent")
+        col_token.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ctk.CTkLabel(col_token, text="Bot Token API", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_entry_tg_token = ctk.CTkEntry(col_token, height=28, placeholder_text="Token API")
+        self.settings_entry_tg_token.pack(fill="x", pady=2)
+        self.settings_entry_tg_token.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        col_chat = ctk.CTkFrame(row_tg_inputs, fg_color="transparent")
+        col_chat.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        ctk.CTkLabel(col_chat, text="Chat ID", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_entry_tg_chat = ctk.CTkEntry(col_chat, height=28, placeholder_text="Chat ID")
+        self.settings_entry_tg_chat.pack(fill="x", pady=2)
+        self.settings_entry_tg_chat.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        row_tg_actions = ctk.CTkFrame(sec3_frame, fg_color="transparent")
+        row_tg_actions.pack(fill="x", padx=15, pady=(4, 12))
+        
+        self.btn_fetch_chat_id = ctk.CTkButton(
+            row_tg_actions, text="🔍 Buscar Chat ID", width=130, height=28,
+            font=ctk.CTkFont(size=11), fg_color=ACCENT_BLUE, hover_color="#2563eb",
+            command=self._fetch_chat_id_clicked
+        )
+        self.btn_fetch_chat_id.pack(side="left", padx=(0, 8))
+        
+        self.btn_tg_test = ctk.CTkButton(
+            row_tg_actions, text="✉️ Testar Envio", width=110, height=28,
+            font=ctk.CTkFont(size=11), fg_color="#475569", hover_color="#334155",
+            command=self._tg_test_clicked
+        )
+        self.btn_tg_test.pack(side="left")
+        
+        self.lbl_tg_status = ctk.CTkLabel(sec3_frame, text="", font=ctk.CTkFont(size=11), text_color="#94a3b8")
+        self.lbl_tg_status.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # SECTION 4: SISTEMA E LOGS
+        sec4_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
+        sec4_frame.pack(fill="x", padx=10, pady=10)
+        
+        lbl_sec4_title = ctk.CTkLabel(sec4_frame, text="💻 Sistema & Diagnósticos", font=ctk.CTkFont(size=13, weight="bold"), text_color="#38bdf8")
+        lbl_sec4_title.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        self.settings_switch_screenshot = ctk.CTkSwitch(sec4_frame, text="Salvar Captura de Tela (Win/Loss)", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_screenshot.pack(anchor="w", padx=15, pady=4)
+        
+        self.settings_switch_logs = ctk.CTkSwitch(sec4_frame, text="Gravar Logs Locais", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_logs.pack(anchor="w", padx=15, pady=(4, 12))
+        
+        # Botão Fechar no rodapé
+        btn_close = ctk.CTkButton(
+            main_frame, 
+            text="FECHAR E APLICAR", 
+            fg_color=ACCENT_GREEN, 
+            hover_color="#059669", 
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=40,
+            command=self.settings_win.destroy
+        )
+        btn_close.pack(fill="x", padx=15, pady=15)
+        
+        # Popula as configurações nos novos widgets da tela de settings
+        self._apply_config_to_gui()
+
+    def _test_sound(self):
+        import winsound, pygame, os
+        selected = self.settings_sound_test_combo.get()
+        mapping = {
+            "Entrada": "click",
+            "Vitória": "win",
+            "Derrota": "loss",
+            "Início": "start",
+            "Stop Win": "stopwin",
+            "Stop Loss": "stoploss"
+        }
+        sound_key = mapping.get(selected)
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            
+            path_mapping = {
+                "click": "songs/entrada.mp3",
+                "win": "songs/win.mp3",
+                "loss": "songs/loss.mp3",
+                "start": "songs/start.mp3",
+                "stopwin": "songs/stopwin.mp3",
+                "stoploss": "songs/stoploss.mp3"
+            }
+            p = path_mapping.get(sound_key)
+            if self.config.get("use_custom_sounds", True) and p and os.path.exists(p):
+                s = pygame.mixer.Sound(p)
+                s.play()
+            else:
+                # Classic winsound beeps fallback for test
+                if sound_key == "click":
+                    winsound.Beep(1000, 150)
+                elif sound_key in ["win", "stopwin"]:
+                    winsound.Beep(1800, 200)
+                    winsound.Beep(2200, 300)
+                elif sound_key in ["loss", "stoploss"]:
+                    winsound.Beep(800, 250)
+                    winsound.Beep(500, 350)
+                elif sound_key == "start":
+                    winsound.Beep(1200, 150)
+                    winsound.Beep(1500, 150)
+        except Exception as e:
+            print(f"Erro ao testar som: {e}")
 
     # --- COMANDOS DE BOTOES ---
     def btn_start_clicked(self):
@@ -1231,7 +1381,13 @@ class AppGui(ctk.CTk):
         """Chama getUpdates para descobrir o chat_id do último usuário que mandou mensagem."""
         import threading, urllib.request, urllib.error, json
 
-        token = self.entry_tg_token.get().strip()
+        if hasattr(self, "settings_entry_tg_token") and self.settings_entry_tg_token and self.settings_entry_tg_token.winfo_exists():
+            token = self.settings_entry_tg_token.get().strip()
+        elif hasattr(self, "entry_tg_token") and self.entry_tg_token and self.entry_tg_token.winfo_exists():
+            token = self.entry_tg_token.get().strip()
+        else:
+            token = self.config.get("telegram_token", "")
+
         if not token:
             self.lbl_tg_status.configure(text="⚠ Cole o Token primeiro.", text_color=ACCENT_YELLOW)
             return
@@ -1275,8 +1431,13 @@ class AppGui(ctk.CTk):
         threading.Thread(target=_do_fetch, daemon=True).start()
 
     def _fetch_done_ok(self, chat_id, name):
-        self.entry_tg_chat.delete(0, "end")
-        self.entry_tg_chat.insert(0, chat_id)
+        if hasattr(self, "settings_entry_tg_chat") and self.settings_entry_tg_chat and self.settings_entry_tg_chat.winfo_exists():
+            self.settings_entry_tg_chat.delete(0, "end")
+            self.settings_entry_tg_chat.insert(0, chat_id)
+        elif hasattr(self, "entry_tg_chat") and self.entry_tg_chat and self.entry_tg_chat.winfo_exists():
+            self.entry_tg_chat.delete(0, "end")
+            self.entry_tg_chat.insert(0, chat_id)
+            
         self.lbl_tg_status.configure(
             text=f"✅ Chat ID de '{name}' preenchido!", text_color=ACCENT_GREEN)
         self.btn_fetch_chat_id.configure(state="normal", text="🔍 Buscar Chat ID")

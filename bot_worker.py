@@ -5,6 +5,7 @@ import threading
 import datetime
 import csv
 import winsound
+import pygame
 import cv2
 import numpy as np
 import pyautogui
@@ -43,6 +44,33 @@ class BotWorker(threading.Thread):
         os.makedirs("capturas/historico", exist_ok=True)
         self.history_file = "wins_history.csv"
         
+        self.sounds = {}
+        self._load_custom_sounds()
+        
+    def _load_custom_sounds(self):
+        try:
+            # Garante que o mixer está inicializado
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+                
+            sound_mappings = {
+                "click": "songs/entrada.mp3",
+                "win": "songs/win.mp3",
+                "loss": "songs/loss.mp3",
+                "start": "songs/start.mp3",
+                "stopwin": "songs/stopwin.mp3",
+                "stoploss": "songs/stoploss.mp3",
+            }
+            
+            for key, path in sound_mappings.items():
+                if os.path.exists(path):
+                    try:
+                        self.sounds[key] = pygame.mixer.Sound(path)
+                    except Exception as e:
+                        print(f"[BotWorker] Erro ao carregar som {path}: {e}")
+        except Exception as e:
+            print(f"[BotWorker] Erro ao inicializar mixer de áudio: {e}")
+        
     def log(self, msg):
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         formatted = f"[{timestamp}] {msg}"
@@ -61,21 +89,51 @@ class BotWorker(threading.Thread):
         
         def _play():
             try:
-                if sound_type == "click":
-                    winsound.Beep(1000, 150)
-                elif sound_type == "win":
-                    winsound.Beep(1800, 200)
-                    winsound.Beep(2200, 300)
-                elif sound_type == "loss":
-                    winsound.Beep(800, 250)
-                    winsound.Beep(500, 350)
-                elif sound_type == "stop":
-                    winsound.Beep(600, 250)
-                elif sound_type == "start":
-                    winsound.Beep(1200, 150)
-                    winsound.Beep(1500, 150)
+                use_custom = self.config.get("use_custom_sounds", True)
+                sound_key = sound_type
+                
+                # Tradução de stopwin/stoploss caso não existam
+                if sound_key not in self.sounds:
+                    if sound_key == "stopwin" and "win" in self.sounds:
+                        sound_key = "win"
+                    elif sound_key == "stoploss" and "loss" in self.sounds:
+                        sound_key = "loss"
+                
+                if use_custom and sound_key in self.sounds:
+                    self.sounds[sound_key].play()
+                else:
+                    # Fallback para beeps clássicos
+                    if sound_type == "click":
+                        winsound.Beep(1000, 150)
+                    elif sound_type in ["win", "stopwin"]:
+                        winsound.Beep(1800, 200)
+                        winsound.Beep(2200, 300)
+                    elif sound_type in ["loss", "stoploss"]:
+                        winsound.Beep(800, 250)
+                        winsound.Beep(500, 350)
+                    elif sound_type == "stop":
+                        winsound.Beep(600, 250)
+                    elif sound_type == "start":
+                        winsound.Beep(1200, 150)
+                        winsound.Beep(1500, 150)
             except Exception:
-                pass
+                # Segundo fallback geral caso o pygame.mixer ou winsound dê algum problema
+                try:
+                    if sound_type == "click":
+                        winsound.Beep(1000, 150)
+                    elif sound_type in ["win", "stopwin"]:
+                        winsound.Beep(1800, 200)
+                        winsound.Beep(2200, 300)
+                    elif sound_type in ["loss", "stoploss"]:
+                        winsound.Beep(800, 250)
+                        winsound.Beep(500, 350)
+                    elif sound_type == "stop":
+                        winsound.Beep(600, 250)
+                    elif sound_type == "start":
+                        winsound.Beep(1200, 150)
+                        winsound.Beep(1500, 150)
+                except Exception:
+                    pass
         
         threading.Thread(target=_play, daemon=True).start()
 
@@ -171,10 +229,15 @@ class BotWorker(threading.Thread):
             
         self.start()
 
-    def stop_bot(self):
+    def stop_bot(self, reason=None):
         if self.running:
             self.running = False
-            self.play_sound("stop")
+            if reason in ["win", "profit_win"]:
+                self.play_sound("stopwin")
+            elif reason == "loss":
+                self.play_sound("stoploss")
+            else:
+                self.play_sound("stop")
             self.log("Bot parado.")
             self.on_status_cb(False)
 
@@ -448,7 +511,7 @@ class BotWorker(threading.Thread):
                     )
                     telegram_sender.send_telegram_msg(self.config, stop_free_msg, self.log)
                     time.sleep(2)
-                    self.stop_bot()
+                    self.stop_bot("entries")
         else:
             self.log(f"Botao de clique nao encontrado (Maior confianca: {conf:.2f}).")
 
@@ -552,7 +615,7 @@ class BotWorker(threading.Thread):
                                 )
                                 telegram_sender.send_telegram_msg(self.config, stop_target_msg, self.log)
                                 time.sleep(2)
-                                self.stop_bot()
+                                self.stop_bot("profit_win")
                                 break
                         
                         if self.config.get("enable_stop_win", False) and self.win_count >= self.config.get("stop_win", 5):
@@ -571,7 +634,7 @@ class BotWorker(threading.Thread):
                             )
                             telegram_sender.send_telegram_msg(self.config, stop_win_msg, self.log)
                             time.sleep(2)  # aguarda envio do Telegram antes de parar
-                            self.stop_bot()
+                            self.stop_bot("win")
                             break
                 else:
                     if win_conf < (sens - 0.05):
@@ -630,7 +693,7 @@ class BotWorker(threading.Thread):
                             )
                             telegram_sender.send_telegram_msg(self.config, stop_loss_msg, self.log)
                             time.sleep(2)  # aguarda envio do Telegram antes de parar
-                            self.stop_bot()
+                            self.stop_bot("loss")
                             break
                 else:
                     if loss_conf < (sens - 0.05):

@@ -9,6 +9,7 @@
     "sensitivity": 0.8,
     "sensitivity_number": 0.65,
     "play_sounds": true,
+    "use_custom_sounds": true,
     "auto_screenshot": false,
     "save_log": true,
     "image_button_path": "capturas/botao.png",

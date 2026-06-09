@@ -14,6 +14,7 @@ DEFAULT_CONFIG = {
     "sensitivity": 0.8,
     "sensitivity_number": 0.65,
     "play_sounds": True,
+    "use_custom_sounds": True,
     "auto_screenshot": False,
     "save_log": True,
     "image_button_path": "capturas/botao.png",
