@@ -30,7 +30,10 @@ class SplashScreen(ctk.CTkToplevel):
         if os.path.exists(image_path):
             try:
                 img = Image.open(image_path)
-                w, h = img.size
+                orig_w, orig_h = img.size
+                aspect = orig_h / orig_w
+                w = 600
+                h = int(w * aspect)
             except Exception:
                 w, h = 600, 350
         else:
