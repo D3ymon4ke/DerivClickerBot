@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Local Config containing sensitive keys/tokens
+config.json
+
+# Local logs and histories
+deriv_bot.log
+wins_history.csv
+capturas/historico/
+
+# OS specific files
+Thumbs.db
+Desktop.ini
