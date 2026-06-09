@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
     "seq_interval": 2.0,
     "seq_wait": 20.0,
     "sensitivity": 0.8,
+    "sensitivity_number": 0.65,
     "play_sounds": True,
     "auto_screenshot": False,
     "save_log": True,
@@ -28,9 +29,16 @@ DEFAULT_CONFIG = {
     "image_linered_path": "capturas/linered.png",
     "image_lineblue_path": "capturas/lineblue.png",
     "image_number_path": "capturas/number.png",
+    "search_region": None,
+    "use_search_region": False,
     "schedule_enabled": False,
     "schedule_date": "",
-    "schedule_time": ""
+    "schedule_time": "",
+    "win_value": 1.50,
+    "loss_value": 30.00,
+    "target_profit": 10.00,
+    "finance_mode": "target",
+    "free_entries": 10
 }
 
 def load_config():

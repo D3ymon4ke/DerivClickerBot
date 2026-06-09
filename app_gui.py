@@ -12,12 +12,51 @@ from bot_worker import BotWorker
 from global_hotkey import GlobalHotkeyListener
 
 # Define cores esteticas modernas
-BG_DARK = "#0f172a"
+BG_DARK = "#000000"
 ACCENT_GREEN = "#10b981"
 ACCENT_RED = "#ef4444"
 ACCENT_BLUE = "#3b82f6"
 ACCENT_YELLOW = "#f59e0b"
 CARD_BG = "#1e293b"
+
+class SplashScreen(ctk.CTkToplevel):
+    def __init__(self, parent, image_path):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        
+        # Carrega a imagem da splashscreen
+        from PIL import Image
+        if os.path.exists(image_path):
+            try:
+                img = Image.open(image_path)
+                w, h = img.size
+            except Exception:
+                w, h = 600, 350
+        else:
+            w, h = 600, 350
+            
+        # Centraliza a splashscreen
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - w) // 2
+        y = (screen_h - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        
+        # Exibe a imagem
+        loaded = False
+        if os.path.exists(image_path):
+            try:
+                self.photo = ctk.CTkImage(light_image=img, dark_image=img, size=(w, h))
+                lbl = ctk.CTkLabel(self, image=self.photo, text="")
+                lbl.pack(fill="both", expand=True)
+                loaded = True
+            except Exception:
+                pass
+                
+        if not loaded:
+            lbl = ctk.CTkLabel(self, text="DERIV CLICKER BOT PRO\nCarregando...", font=ctk.CTkFont(size=20, weight="bold"))
+            lbl.pack(fill="both", expand=True)
 
 class CollapsibleFrame(ctk.CTkFrame):
     def __init__(self, parent, title="", start_collapsed=False, **kwargs):
@@ -62,10 +101,38 @@ class AppGui(ctk.CTk):
     def __init__(self):
         super().__init__()
         
+        # Garante o ícone correto na barra de tarefas no Windows
+        import ctypes
+        try:
+            myappid = 'deriv.clicker.bot.v1.0'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+            
+        self.withdraw()
+        
+        # Mostra a Splash Screen
+        splash_path = "capturas/splashscren.png"
+        self.splash = SplashScreen(self, splash_path)
+        
+        # Agenda exibir a janela principal
+        self.after(2500, self._show_main_window)
+        
         # Carrega configuracoes
         self.config = config_manager.load_config()
         self.bot = None
         self.hotkey_listener = None
+        self.overlay = None
+        
+        # Reseta streaks
+        self.max_win_streak = 0
+        self.max_loss_streak = 0
+        self.current_win_streak = 0
+        self.current_loss_streak = 0
+        
+        # Atalho local para o Overlay (Tecla O)
+        self.bind_all("<Key-o>", lambda e: self.toggle_overlay())
+        self.bind_all("<Key-O>", lambda e: self.toggle_overlay())
         
         # Timer e contadores locais para interface
         self.start_time = 0
@@ -78,9 +145,15 @@ class AppGui(ctk.CTk):
                 self.iconbitmap("icon.ico")
             except Exception:
                 pass
-        self.geometry("1100x750")          # tamanho inicial caso o zoomed falhe
+                
+        # Dimensões e Centralização
+        w, h = 1110, 965
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - w) // 2
+        y = (screen_h - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
         self.minsize(1024, 700)            # tamanho mínimo para que nada fique cortado
-        self.state("zoomed")               # abre maximizada (Windows)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         
@@ -89,7 +162,7 @@ class AppGui(ctk.CTk):
         self.focus_force()
         
         # Cria o layout de Grid principal
-        self.grid_columnconfigure(0, weight=1, minsize=340)
+        self.grid_columnconfigure(0, weight=0, minsize=340)
         self.grid_columnconfigure(1, weight=2, minsize=560)
         self.grid_rowconfigure(0, weight=1)
         
@@ -113,6 +186,7 @@ class AppGui(ctk.CTk):
         # Envia notificacao de Bot Preparado se Telegram estiver ativo
         modo_lbl = self._mode_label_from_key(self.config.get("mode", "fixed"))
         sens = self.config.get("sensitivity", 0.8)
+        sens_num = self.config.get("sensitivity_number", 0.65)
         stop_win_info = f"{self.config.get('stop_win', 5)} Wins" if self.config.get("enable_stop_win", False) else "Desativado"
         stop_loss_info = f"{self.config.get('stop_loss', 3)} Losses" if self.config.get("enable_stop_loss", False) else "Desativado"
         
@@ -121,7 +195,8 @@ class AppGui(ctk.CTk):
             "━━━━━━━━━━━━━━━━━━\n"
             "⚡ <b>Estado:</b> Bot Preparado!\n"
             f"⚙️ <b>Modo Atual:</b> {modo_lbl}\n"
-            f"🎯 <b>Sensibilidade:</b> {sens:.2f}\n"
+            f"🎯 <b>Sensibilidade Geral:</b> {sens:.2f}\n"
+            f"🎯 <b>Sensibilidade Número:</b> {sens_num:.2f}\n"
             "📊 <b>Limites de Stop:</b>\n"
             f"├─ Stop Win: {stop_win_info}\n"
             f"└─ Stop Loss: {stop_loss_info}\n"
@@ -213,6 +288,47 @@ class AppGui(ctk.CTk):
         self.slider_sens.set(sens)
         self.lbl_sens_val.configure(text=f"{sens:.2f}")
         
+        # Sensibilidade do Número
+        sens_num = self.config.get("sensitivity_number", 0.65)
+        self.slider_sens_num.set(sens_num)
+        self.lbl_sens_num_val.configure(text=f"{sens_num:.2f}")
+        
+        # Região de Busca do Número
+        use_region = self.config.get("use_search_region", False)
+        if use_region:
+            self.check_use_region.select()
+        else:
+            self.check_use_region.deselect()
+            
+        region = self.config.get("search_region", None)
+        if region:
+            self.lbl_region_coords.configure(text=f"{region[0]},{region[1]} ({region[2]}x{region[3]})")
+        else:
+            self.lbl_region_coords.configure(text="Não definida")
+        
+        # Gerenciamento Financeiro
+        self.entry_win_value.delete(0, "end")
+        self.entry_win_value.insert(0, f"{self.config.get('win_value', 1.50):.2f}")
+        
+        self.entry_loss_value.delete(0, "end")
+        self.entry_loss_value.insert(0, f"{self.config.get('loss_value', 30.00):.2f}")
+        
+        self.entry_target_profit.delete(0, "end")
+        self.entry_target_profit.insert(0, f"{self.config.get('target_profit', 10.00):.2f}")
+        
+        self.entry_free_entries.delete(0, "end")
+        self.entry_free_entries.insert(0, str(self.config.get('free_entries', 10)))
+        
+        fin_mode = self.config.get("finance_mode", "target")
+        if fin_mode == "target":
+            self.seg_finance_mode.set("Meta de Lucro")
+            self.frame_finance_free.pack_forget()
+            self.frame_finance_target.pack(fill="x", padx=15, pady=(0, 10))
+        else:
+            self.seg_finance_mode.set("Livre")
+            self.frame_finance_target.pack_forget()
+            self.frame_finance_free.pack(fill="x", padx=15, pady=(0, 10))
+
         # Opcoes Extras
         if self.config.get("play_sounds", True):
             self.switch_sounds.select()
@@ -298,11 +414,37 @@ class AppGui(ctk.CTk):
         left_frame = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         
-        # Titulo do App
-        lbl_title = ctk.CTkLabel(left_frame, text="DERIV CLICKER", font=ctk.CTkFont(size=22, weight="bold"))
-        lbl_title.pack(pady=(20, 5))
-        lbl_subtitle = ctk.CTkLabel(left_frame, text="Automação Inteligente v1.0", text_color="gray", font=ctk.CTkFont(size=12))
-        lbl_subtitle.pack(pady=(0, 20))
+        # Titulo do App (Logo ou Texto se não existir)
+        logo_path = "imagens/logo.png"
+        if not os.path.exists(logo_path):
+            logo_path = "capturas/logo.png"
+            
+        loaded_logo = False
+        if os.path.exists(logo_path):
+            try:
+                with Image.open(logo_path) as img:
+                    orig_w, orig_h = img.size
+                    aspect = orig_h / orig_w
+                    logo_w = 320
+                    logo_h = int(logo_w * aspect)
+                    
+                self.logo_img_pil = Image.open(logo_path)
+                self.logo_img = ctk.CTkImage(
+                    light_image=self.logo_img_pil,
+                    dark_image=self.logo_img_pil,
+                    size=(logo_w, logo_h)
+                )
+                lbl_title = ctk.CTkLabel(left_frame, image=self.logo_img, text="", fg_color="transparent")
+                lbl_title.pack(fill="x", padx=0, pady=(0, 15))
+                loaded_logo = True
+            except Exception as e:
+                print(f"[GUI] Erro ao carregar logo: {e}")
+                
+        if not loaded_logo:
+            lbl_title = ctk.CTkLabel(left_frame, text="DERIV CLICKER", font=ctk.CTkFont(size=22, weight="bold"))
+            lbl_title.pack(pady=(20, 5))
+            lbl_subtitle = ctk.CTkLabel(left_frame, text="Automação Inteligente v1.0", text_color="gray", font=ctk.CTkFont(size=12))
+            lbl_subtitle.pack(pady=(0, 20))
         
         # Status Card
         status_card = ctk.CTkFrame(left_frame, fg_color=CARD_BG, border_color="#334155", border_width=1)
@@ -349,6 +491,20 @@ class AppGui(ctk.CTk):
         self.lbl_metric_rate = ctk.CTkLabel(card_rate, text="0.0%", font=ctk.CTkFont(size=20, weight="bold"), text_color=ACCENT_YELLOW)
         self.lbl_metric_rate.pack(pady=(0, 8))
         
+        # Card Saldo Financeiro / Meta
+        self.card_finance = ctk.CTkFrame(left_frame, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        self.card_finance.pack(fill="x", padx=15, pady=5)
+        
+        self.lbl_finance_title = ctk.CTkLabel(self.card_finance, text="SALDO FINANCEIRO (META)", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray")
+        self.lbl_finance_title.pack(pady=(8, 2))
+        
+        self.lbl_finance_value = ctk.CTkLabel(self.card_finance, text="$0.00 / $10.00", font=ctk.CTkFont(size=20, weight="bold"), text_color=ACCENT_BLUE)
+        self.lbl_finance_value.pack(pady=(0, 5))
+        
+        self.progress_finance = ctk.CTkProgressBar(self.card_finance, height=8, progress_color=ACCENT_GREEN)
+        self.progress_finance.pack(fill="x", padx=15, pady=(0, 10))
+        self.progress_finance.set(0.0)
+        
         # Card Tempo e Contadores
         info_card = ctk.CTkFrame(left_frame, fg_color=CARD_BG, border_color="#334155", border_width=1)
         info_card.pack(fill="x", padx=15, pady=10)
@@ -367,22 +523,21 @@ class AppGui(ctk.CTk):
         self.lbl_next_click = ctk.CTkLabel(row_next, text="Aguardando...", font=ctk.CTkFont(size=13, weight="bold"), text_color=ACCENT_YELLOW)
         self.lbl_next_click.pack(side="right")
         
-        # Painel do Validador de Imagens
-        img_check_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
-        img_check_frame.pack(fill="x", padx=15, pady=(15, 5))
-        ctk.CTkLabel(img_check_frame, text="Verificador de Imagens:", font=ctk.CTkFont(size=11, weight="bold"), text_color="gray").pack(anchor="w")
+        # Painel do Validador de Imagens (Agora Recolhível)
+        img_check_container = CollapsibleFrame(left_frame, title="Verificador de Imagens", start_collapsed=True)
+        img_check_container.pack(fill="x", padx=15, pady=(10, 5))
         
-        self.lbl_status_btn_img = ctk.CTkLabel(img_check_frame, text="botao.png: Verificando...", font=ctk.CTkFont(size=11))
-        self.lbl_status_btn_img.pack(anchor="w", padx=10, pady=1)
+        self.lbl_status_btn_img = ctk.CTkLabel(img_check_container.content_frame, text="botao.png: Verificando...", font=ctk.CTkFont(size=11))
+        self.lbl_status_btn_img.pack(anchor="w", padx=15, pady=2)
         
-        self.lbl_status_win_img = ctk.CTkLabel(img_check_frame, text="win.png: Verificando...", font=ctk.CTkFont(size=11))
-        self.lbl_status_win_img.pack(anchor="w", padx=10, pady=1)
+        self.lbl_status_win_img = ctk.CTkLabel(img_check_container.content_frame, text="win.png: Verificando...", font=ctk.CTkFont(size=11))
+        self.lbl_status_win_img.pack(anchor="w", padx=15, pady=2)
         
-        self.lbl_status_loss_img = ctk.CTkLabel(img_check_frame, text="loss.png: Verificando...", font=ctk.CTkFont(size=11))
-        self.lbl_status_loss_img.pack(anchor="w", padx=10, pady=1)
+        self.lbl_status_loss_img = ctk.CTkLabel(img_check_container.content_frame, text="loss.png: Verificando...", font=ctk.CTkFont(size=11))
+        self.lbl_status_loss_img.pack(anchor="w", padx=15, pady=2)
         
-        self.lbl_status_number_img = ctk.CTkLabel(img_check_frame, text="number.png: Verificando...", font=ctk.CTkFont(size=11))
-        self.lbl_status_number_img.pack(anchor="w", padx=10, pady=1)
+        self.lbl_status_number_img = ctk.CTkLabel(img_check_container.content_frame, text="number.png: Verificando...", font=ctk.CTkFont(size=11))
+        self.lbl_status_number_img.pack(anchor="w", padx=15, pady=2)
         
         # Botoes de Acao Principais
         self.btn_start = ctk.CTkButton(left_frame, text="INICIAR BOT", fg_color=ACCENT_GREEN, hover_color="#059669", font=ctk.CTkFont(size=16, weight="bold"), height=45, command=self.btn_start_clicked)
@@ -390,6 +545,17 @@ class AppGui(ctk.CTk):
         
         self.btn_stop = ctk.CTkButton(left_frame, text="PARAR BOT (F8)", fg_color=ACCENT_RED, hover_color="#dc2626", font=ctk.CTkFont(size=16, weight="bold"), height=45, command=self.btn_stop_clicked, state="disabled")
         self.btn_stop.pack(fill="x", padx=15, pady=0)
+        
+        self.btn_overlay = ctk.CTkButton(
+            left_frame, 
+            text="WIDGET OVERLAY (O)", 
+            fg_color="#475569", 
+            hover_color="#334155", 
+            font=ctk.CTkFont(size=14, weight="bold"), 
+            height=35, 
+            command=self.toggle_overlay
+        )
+        self.btn_overlay.pack(fill="x", padx=15, pady=(15, 0))
 
     def _build_right_panel(self):
         # Painel direito — scrollável para não cortar conteúdo
@@ -409,7 +575,7 @@ class AppGui(ctk.CTk):
         self.seg_mode.pack(fill="x", pady=(0, 15))
         
         # Container de Modos Dinamicos (Agora Recolhível)
-        self.mode_container = CollapsibleFrame(right_frame, title="Configurações do Modo", start_collapsed=False)
+        self.mode_container = CollapsibleFrame(right_frame, title="Configurações do Modo", start_collapsed=True)
         self.mode_container.pack(fill="x", pady=(0, 15))
         
         # --- SUBFRAME: MODO FIXO ---
@@ -489,6 +655,19 @@ class AppGui(ctk.CTk):
                      font=ctk.CTkFont(size=11), text_color="#94a3b8",
                      justify="left").pack(anchor="w", padx=15, pady=(0, 10))
 
+        # Configuração de Área de Busca do Número
+        row_region = ctk.CTkFrame(self.frame_linered, fg_color="transparent")
+        row_region.pack(fill="x", padx=15, pady=(0, 10))
+        
+        self.check_use_region = ctk.CTkCheckBox(row_region, text="Limitar Área de Busca", font=ctk.CTkFont(size=12), command=self._gui_setting_changed)
+        self.check_use_region.pack(side="left", padx=(0, 10))
+        
+        self.btn_select_region = ctk.CTkButton(row_region, text="Definir Área", font=ctk.CTkFont(size=11), width=100, height=26, fg_color=ACCENT_BLUE, hover_color="#2563eb", command=self.btn_select_region_clicked)
+        self.btn_select_region.pack(side="left", padx=(0, 10))
+        
+        self.lbl_region_coords = ctk.CTkLabel(row_region, text="Não definida", font=ctk.CTkFont(size=11), text_color="#94a3b8")
+        self.lbl_region_coords.pack(side="left")
+
         # --- NOVO: CONTAINER DE AGENDAMENTO (Agora Recolhível) ---
         self.schedule_frame = CollapsibleFrame(right_frame, title="Agendamento de Início", start_collapsed=True)
         self.schedule_frame.pack(fill="x", pady=(0, 15))
@@ -516,19 +695,30 @@ class AppGui(ctk.CTk):
         self.entry_sched_time.bind("<KeyRelease>", self._gui_setting_changed)
 
         # --- OUTRAS CONFIGURACOES (SENSIBILIDADE E SOUND/SCREENSHOT SWITCHES - Agora Recolhível) ---
-        extra_configs = CollapsibleFrame(right_frame, title="Ajustes & Limites do Bot", start_collapsed=False)
+        extra_configs = CollapsibleFrame(right_frame, title="Ajustes & Limites do Bot", start_collapsed=True)
         extra_configs.pack(fill="x", pady=(0, 15))
         
-        # Sensibilidade OpenCV
-        lbl_sens_title = ctk.CTkLabel(extra_configs.content_frame, text="Sensibilidade do Reconhecimento de Imagem", font=ctk.CTkFont(weight="bold"))
-        lbl_sens_title.pack(anchor="w", padx=15, pady=(10, 5))
+        # Sensibilidade OpenCV Geral
+        lbl_sens_title = ctk.CTkLabel(extra_configs.content_frame, text="Sensibilidade Geral (Botões, Win/Loss)", font=ctk.CTkFont(weight="bold"))
+        lbl_sens_title.pack(anchor="w", padx=15, pady=(10, 2))
         
         row_sens = ctk.CTkFrame(extra_configs.content_frame, fg_color="transparent")
-        row_sens.pack(fill="x", padx=15, pady=5)
+        row_sens.pack(fill="x", padx=15, pady=(0, 10))
         self.slider_sens = ctk.CTkSlider(row_sens, from_=0.5, to=1.0, number_of_steps=50, command=self._slider_sens_changed)
         self.slider_sens.pack(side="left", fill="x", expand=True)
         self.lbl_sens_val = ctk.CTkLabel(row_sens, text="0.80", width=50, font=ctk.CTkFont(weight="bold"))
         self.lbl_sens_val.pack(side="right", padx=(10, 0))
+
+        # Sensibilidade OpenCV do Número
+        lbl_sens_num_title = ctk.CTkLabel(extra_configs.content_frame, text="Sensibilidade do Número (Preço / Sinal)", font=ctk.CTkFont(weight="bold"))
+        lbl_sens_num_title.pack(anchor="w", padx=15, pady=(10, 2))
+
+        row_sens_num = ctk.CTkFrame(extra_configs.content_frame, fg_color="transparent")
+        row_sens_num.pack(fill="x", padx=15, pady=(0, 10))
+        self.slider_sens_num = ctk.CTkSlider(row_sens_num, from_=0.5, to=1.0, number_of_steps=50, command=self._slider_sens_num_changed)
+        self.slider_sens_num.pack(side="left", fill="x", expand=True)
+        self.lbl_sens_num_val = ctk.CTkLabel(row_sens_num, text="0.65", width=50, font=ctk.CTkFont(weight="bold"))
+        self.lbl_sens_num_val.pack(side="right", padx=(10, 0))
         
         # Stop Win e Stop Loss limits
         lbl_stops_title = ctk.CTkLabel(extra_configs.content_frame, text="Limites de Stop Win / Stop Loss (Mensagens)", font=ctk.CTkFont(weight="bold"))
@@ -567,6 +757,59 @@ class AppGui(ctk.CTk):
         
         self.switch_logs = ctk.CTkSwitch(row_switches, text="Gravar Logs", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
         self.switch_logs.pack(side="left", expand=True, anchor="w", padx=5)
+
+        # --- NOVO: GERENCIAMENTO FINANCEIRO (Recolhível) ---
+        finance_frame = CollapsibleFrame(right_frame, title="Gerenciamento Financeiro (Meta / Livre)", start_collapsed=True)
+        finance_frame.pack(fill="x", pady=(0, 15))
+
+        # Configurações de Win/Loss (Comum)
+        row_values = ctk.CTkFrame(finance_frame.content_frame, fg_color="transparent")
+        row_values.pack(fill="x", padx=15, pady=(5, 5))
+        
+        # Win value
+        col_win = ctk.CTkFrame(row_values, fg_color="transparent")
+        col_win.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ctk.CTkLabel(col_win, text="Retorno por Win ($)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_win_value = ctk.CTkEntry(col_win, height=28)
+        self.entry_win_value.pack(fill="x", pady=2)
+        self.entry_win_value.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        # Loss value
+        col_loss = ctk.CTkFrame(row_values, fg_color="transparent")
+        col_loss.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        ctk.CTkLabel(col_loss, text="Custo por Loss ($)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_loss_value = ctk.CTkEntry(col_loss, height=28)
+        self.entry_loss_value.pack(fill="x", pady=2)
+        self.entry_loss_value.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        # Modo de Gerenciamento
+        lbl_mode_title = ctk.CTkLabel(finance_frame.content_frame, text="Modo de Gerenciamento", font=ctk.CTkFont(size=11, weight="bold"))
+        lbl_mode_title.pack(anchor="w", padx=15, pady=(5, 2))
+        
+        self.seg_finance_mode = ctk.CTkSegmentedButton(
+            finance_frame.content_frame, 
+            values=["Meta de Lucro", "Livre"], 
+            command=self._finance_mode_changed
+        )
+        self.seg_finance_mode.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Sub-frames específicos para cada modo
+        self.frame_finance_target = ctk.CTkFrame(finance_frame.content_frame, fg_color="transparent")
+        self.frame_finance_target.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Meta de Lucro
+        ctk.CTkLabel(self.frame_finance_target, text="Meta de Lucro ($)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_target_profit = ctk.CTkEntry(self.frame_finance_target, height=28)
+        self.entry_target_profit.pack(fill="x", pady=2)
+        self.entry_target_profit.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        # Livre
+        self.frame_finance_free = ctk.CTkFrame(finance_frame.content_frame, fg_color="transparent")
+        
+        ctk.CTkLabel(self.frame_finance_free, text="Quantidade Limite de Entradas (Livre)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_free_entries = ctk.CTkEntry(self.frame_finance_free, height=28)
+        self.entry_free_entries.pack(fill="x", pady=2)
+        self.entry_free_entries.bind("<KeyRelease>", self._gui_setting_changed)
 
         # --- CONFIGURACAO DO TELEGRAM (Agora Recolhível) ---
         telegram_frame = CollapsibleFrame(right_frame, title="Configurações do Telegram", start_collapsed=True)
@@ -630,7 +873,7 @@ class AppGui(ctk.CTk):
         self.lbl_tg_status.pack(side="left")
 
         # --- LOG CONSOLE EM TEMPO REAL (Agora Recolhível) ---
-        console_frame = CollapsibleFrame(right_frame, title="Logs de Operação em Tempo Real", start_collapsed=False)
+        console_frame = CollapsibleFrame(right_frame, title="Logs de Operação em Tempo Real", start_collapsed=True)
         console_frame.pack(fill="both", expand=True)
         
         row_console_hdr = ctk.CTkFrame(console_frame.content_frame, fg_color="transparent")
@@ -690,6 +933,10 @@ class AppGui(ctk.CTk):
         self.lbl_sens_val.configure(text=f"{val:.2f}")
         self._gui_setting_changed()
 
+    def _slider_sens_num_changed(self, val):
+        self.lbl_sens_num_val.configure(text=f"{val:.2f}")
+        self._gui_setting_changed()
+
     # --- SALVAR CONFIGURACOES AUTOMATICAMENTE ---
     def _gui_setting_changed(self, *args):
         # Tenta ler a sequencia com segurança
@@ -719,6 +966,33 @@ class AppGui(ctk.CTk):
             stop_loss_val = 3
 
         # Atualiza o dicionario
+        # Validação financeira
+        try:
+            win_val = float(self.entry_win_value.get().replace(",", "."))
+        except ValueError:
+            win_val = 1.50
+            
+        try:
+            loss_val = float(self.entry_loss_value.get().replace(",", "."))
+        except ValueError:
+            loss_val = 30.00
+            
+        try:
+            target_profit_val = float(self.entry_target_profit.get().replace(",", "."))
+        except ValueError:
+            target_profit_val = 10.00
+            
+        try:
+            free_entries_val = int(self.entry_free_entries.get())
+        except ValueError:
+            free_entries_val = 10
+            
+        self.config["win_value"] = win_val
+        self.config["loss_value"] = loss_val
+        self.config["target_profit"] = target_profit_val
+        self.config["free_entries"] = free_entries_val
+        self.config["finance_mode"] = "target" if self.seg_finance_mode.get() == "Meta de Lucro" else "free"
+
         self.config["mode"] = self._mode_key_from_label(self.seg_mode.get())
         self.config["fixed_interval"] = round(self.slider_fixed.get(), 1)
         self.config["random_min"] = round(self.slider_rand_min.get(), 1)
@@ -727,6 +1001,8 @@ class AppGui(ctk.CTk):
         self.config["seq_interval"] = round(seq_interval, 1)
         self.config["seq_wait"] = round(seq_wait, 1)
         self.config["sensitivity"] = round(self.slider_sens.get(), 2)
+        self.config["sensitivity_number"] = round(self.slider_sens_num.get(), 2)
+        self.config["use_search_region"] = self.check_use_region.get() == 1
         self.config["play_sounds"] = self.switch_sounds.get() == 1
         self.config["auto_screenshot"] = self.switch_screenshot.get() == 1
         self.config["save_log"] = self.switch_logs.get() == 1
@@ -804,6 +1080,26 @@ class AppGui(ctk.CTk):
         self.lbl_timer.configure(text="00:00:00")
         self.lbl_next_click.configure(text="Aguardando...")
         
+        # Reseta streaks
+        self.max_win_streak = 0
+        self.max_loss_streak = 0
+        self.current_win_streak = 0
+        self.current_loss_streak = 0
+        
+        self._update_overlay_data()
+        
+        # Reseta financeiro na GUI
+        fin_mode = self.config.get("finance_mode", "target")
+        if fin_mode == "target":
+            target = self.config.get("target_profit", 10.00)
+            self.lbl_finance_title.configure(text="SALDO FINANCEIRO (META)")
+            self.lbl_finance_value.configure(text=f"$0.00 / ${target:.2f}", text_color=ACCENT_BLUE)
+        else:
+            limit_entries = self.config.get("free_entries", 10)
+            self.lbl_finance_title.configure(text="SALDO FINANCEIRO (ENTRADAS)")
+            self.lbl_finance_value.configure(text=f"$0.00 (0 / {limit_entries} Entr.)", text_color=ACCENT_BLUE)
+        self.progress_finance.set(0.0)
+        
         # Inicia o thread do BotWorker
         self.start_time = time.time()
         self.remaining_schedule_time = 0
@@ -816,7 +1112,8 @@ class AppGui(ctk.CTk):
             on_status_cb=self.bot_status_changed_external,
             on_next_time_cb=self.update_next_click_metric,
             on_stop_limit_cb=self._on_stop_limit,
-            on_start_execution_cb=self.bot_started_execution
+            on_start_execution_cb=self.bot_started_execution,
+            on_finance_cb=self.update_finance_metric
         )
         self.bot.start_bot()
 
@@ -829,6 +1126,7 @@ class AppGui(ctk.CTk):
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
         self.lbl_next_click.configure(text="Inativo", text_color="gray")
+        self._update_overlay_data()
 
     def bot_status_changed_external(self, running):
         # Chamado pelo bot_worker se ele parar sozinho ou devido a erro
@@ -841,6 +1139,7 @@ class AppGui(ctk.CTk):
         self.btn_stop.configure(state="disabled")
         self.lbl_next_click.configure(text="Inativo", text_color="gray")
         self.bot = None
+        self._update_overlay_data()
 
     def _on_stop_limit(self, limit_type, count):
         """Chamado pelo BotWorker quando o Stop Win ou Stop Loss e atingido."""
@@ -859,6 +1158,18 @@ class AppGui(ctk.CTk):
             icon       = "💰"
             title_txt  = "STOP WIN ATINGIDO!"
             detail_txt = f"Meta de {count} vitórias alcançada!\nExcelente sessão! Lucro garantido."
+        elif limit_type == "profit_win":
+            bg_color   = "#064e3b"   # verde escuro
+            border_col = "#10b981"
+            icon       = "💰"
+            title_txt  = "META DE LUCRO BATIDA!"
+            detail_txt = f"Meta de Lucro de ${count:.2f} alcançada!\nExcelente sessão! Lucro garantido."
+        elif limit_type == "entries":
+            bg_color   = "#1e3a8a"   # azul escuro
+            border_col = "#3b82f6"
+            icon       = "🏁"
+            title_txt  = "LIMITE DE ENTRADAS!"
+            detail_txt = f"Limite de {count} entradas alcançado (Modo Livre).\nOperações finalizadas com sucesso."
         else:
             bg_color   = "#7f1d1d"   # vermelho escuro
             border_col = "#ef4444"
@@ -1017,6 +1328,7 @@ class AppGui(ctk.CTk):
 
     def _update_clicks_on_ui(self, click_count):
         self.lbl_metric_clicks.configure(text=str(click_count))
+        self._update_overlay_data()
 
     def update_wins_metric(self, win_count):
         self.after(0, lambda: self._update_wins_on_ui(win_count))
@@ -1024,6 +1336,14 @@ class AppGui(ctk.CTk):
     def _update_wins_on_ui(self, win_count):
         self.lbl_metric_wins.configure(text=str(win_count))
         self._update_assertiveness_rate()
+        
+        # Streak tracker
+        self.current_win_streak += 1
+        self.current_loss_streak = 0
+        if self.current_win_streak > self.max_win_streak:
+            self.max_win_streak = self.current_win_streak
+            
+        self._update_overlay_data()
 
     def update_losses_metric(self, loss_count):
         self.after(0, lambda: self._update_losses_on_ui(loss_count))
@@ -1031,6 +1351,14 @@ class AppGui(ctk.CTk):
     def _update_losses_on_ui(self, loss_count):
         self.lbl_metric_losses.configure(text=str(loss_count))
         self._update_assertiveness_rate()
+        
+        # Streak tracker
+        self.current_loss_streak += 1
+        self.current_win_streak = 0
+        if self.current_loss_streak > self.max_loss_streak:
+            self.max_loss_streak = self.current_loss_streak
+            
+        self._update_overlay_data()
 
     def _update_assertiveness_rate(self):
         try:
@@ -1066,6 +1394,7 @@ class AppGui(ctk.CTk):
         self.lbl_status_value.configure(text="EXECUTANDO", text_color=ACCENT_GREEN)
         self.start_time = time.time()
         self.remaining_schedule_time = 0
+        self._update_overlay_data()
 
     def log_message(self, message):
         # Permite chamar de threads
@@ -1112,8 +1441,153 @@ class AppGui(ctk.CTk):
         else:
             self.lbl_next_click.configure(text="Inativo", text_color="gray")
             
+        # Repassa alteracoes ao overlay em tempo real
+        self._update_overlay_data()
+        
         # Roda novamente em 100ms para manter contagem fluida
         self.after(100, self.update_gui_loop)
+
+    def btn_select_region_clicked(self):
+        # Minimiza a janela principal para não atrapalhar
+        self.withdraw()
+        self.after(300, self._launch_selector)
+        
+    def _launch_selector(self):
+        try:
+            from region_selector import RegionSelector
+            selector = RegionSelector(self)
+            coords = selector.get_region()
+            
+            if coords:
+                # coords = (x, y, w, h)
+                self.config["search_region"] = coords
+                self.config["use_search_region"] = True
+                self.check_use_region.select()
+                self.lbl_region_coords.configure(text=f"{coords[0]},{coords[1]} ({coords[2]}x{coords[3]})")
+                self.log_message(f"[Config] Região de busca definida: {coords}")
+            else:
+                self.log_message("[Config] Seleção de região cancelada.")
+        except Exception as e:
+            self.log_message(f"[Erro] Falha ao abrir seletor: {e}")
+            messagebox.showerror("Erro", f"Não foi possível abrir o seletor: {e}")
+        finally:
+            # Restaura a janela
+            self.deiconify()
+            self._gui_setting_changed()
+
+    def _finance_mode_changed(self, mode_name):
+        if mode_name == "Meta de Lucro":
+            self.frame_finance_free.pack_forget()
+            self.frame_finance_target.pack(fill="x", padx=15, pady=(0, 10))
+        else:
+            self.frame_finance_target.pack_forget()
+            self.frame_finance_free.pack(fill="x", padx=15, pady=(0, 10))
+        self._gui_setting_changed()
+
+    def update_finance_metric(self, current_profit, total_entries):
+        self.after(0, lambda: self._update_finance_on_ui(current_profit, total_entries))
+
+    def _update_finance_on_ui(self, current_profit, total_entries):
+        finance_mode = self.config.get("finance_mode", "target")
+        
+        # Determina a cor com base no lucro
+        color = ACCENT_GREEN if current_profit >= 0 else ACCENT_RED
+        
+        if finance_mode == "target":
+            target = self.config.get("target_profit", 10.00)
+            self.lbl_finance_title.configure(text="SALDO FINANCEIRO (META)")
+            self.lbl_finance_value.configure(text=f"${current_profit:.2f} / ${target:.2f}", text_color=color)
+            
+            if target > 0:
+                progress = max(0.0, min(1.0, current_profit / target))
+            else:
+                progress = 0.0
+            self.progress_finance.set(progress)
+        else:
+            limit_entries = self.config.get("free_entries", 10)
+            self.lbl_finance_title.configure(text="SALDO FINANCEIRO (ENTRADAS)")
+            self.lbl_finance_value.configure(text=f"${current_profit:.2f} ({total_entries} / {limit_entries} Entr.)", text_color=color)
+            
+            if limit_entries > 0:
+                progress = max(0.0, min(1.0, total_entries / limit_entries))
+            else:
+                progress = 0.0
+            self.progress_finance.set(progress)
+            
+        self._update_overlay_data()
+
+    def toggle_overlay(self):
+        if not self.overlay or not self.overlay.winfo_exists():
+            from floating_overlay import FloatingOverlay
+            self.overlay = FloatingOverlay(self)
+            self._update_overlay_data()
+        
+        if self.overlay.winfo_viewable():
+            self.overlay.withdraw()
+            self.btn_overlay.configure(fg_color="#475569")
+        else:
+            self.overlay.deiconify()
+            self.overlay.lift()
+            self.overlay.attributes("-topmost", True)
+            self.btn_overlay.configure(fg_color=ACCENT_BLUE)
+
+    def _update_overlay_data(self):
+        if not self.overlay or not self.overlay.winfo_exists():
+            return
+            
+        status = self.lbl_status_value.cget("text")
+        
+        try:
+            clicks = int(self.lbl_metric_clicks.cget("text"))
+        except ValueError:
+            clicks = 0
+            
+        try:
+            wins = int(self.lbl_metric_wins.cget("text"))
+        except ValueError:
+            wins = 0
+            
+        try:
+            losses = int(self.lbl_metric_losses.cget("text"))
+        except ValueError:
+            losses = 0
+            
+        total = wins + losses
+        rate = (wins / total * 100) if total > 0 else 0.0
+        
+        current_profit = getattr(self.bot, "current_profit", 0.0) if self.bot else 0.0
+        target = self.config.get("target_profit", 10.00)
+        fin_mode = self.config.get("finance_mode", "target")
+        free_entries = self.config.get("free_entries", 10)
+        
+        timer_str = self.lbl_timer.cget("text")
+        next_click_str = self.lbl_next_click.cget("text")
+        
+        win_streak = getattr(self, "max_win_streak", 0)
+        loss_streak = getattr(self, "max_loss_streak", 0)
+        
+        self.overlay.update_data(
+            status=status,
+            clicks=clicks,
+            wins=wins,
+            losses=losses,
+            rate=rate,
+            win_streak=win_streak,
+            loss_streak=loss_streak,
+            current_profit=current_profit,
+            target_profit=target,
+            finance_mode=fin_mode,
+            free_entries=free_entries,
+            timer_str=timer_str,
+            next_click_str=next_click_str
+        )
+
+    def _show_main_window(self):
+        if hasattr(self, "splash") and self.splash.winfo_exists():
+            self.splash.destroy()
+        self.deiconify()
+        self.lift()
+        self.focus_force()
 
     def destroy(self):
         # Finaliza threads ao fechar a janela

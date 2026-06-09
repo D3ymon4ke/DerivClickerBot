@@ -14,7 +14,7 @@ import telegram_sender
 pyautogui.FAILSAFE = True
 
 class BotWorker(threading.Thread):
-    def __init__(self, config, on_click_cb, on_win_cb, on_loss_cb, on_log_cb, on_status_cb, on_next_time_cb, on_stop_limit_cb, on_start_execution_cb=None):
+    def __init__(self, config, on_click_cb, on_win_cb, on_loss_cb, on_log_cb, on_status_cb, on_next_time_cb, on_stop_limit_cb, on_start_execution_cb=None, on_finance_cb=None):
         super().__init__(daemon=True)
         self.config = config
         self.on_click_cb = on_click_cb
@@ -25,11 +25,13 @@ class BotWorker(threading.Thread):
         self.on_next_time_cb = on_next_time_cb
         self.on_stop_limit_cb = on_stop_limit_cb
         self.on_start_execution_cb = on_start_execution_cb
+        self.on_finance_cb = on_finance_cb
         
         self.running = False
         self.click_count = 0
         self.win_count = 0
         self.loss_count = 0
+        self.current_profit = 0.0
         
         self.win_detected_state = False
         self.last_win_time = 0
@@ -319,7 +321,7 @@ class BotWorker(threading.Thread):
         - Respeita todos os limites de Stop Win/Stop Loss
         """
         number_path = self.config.get("image_number_path", "capturas/number.png")
-        sens        = self.config.get("sensitivity", 0.8)
+        sens        = self.config.get("sensitivity_number", 0.65)
         
         self.log("Modo Número Vermelho ativo: aguardando o número ficar vermelho para entrar...")
         self.on_next_time_cb(0)  # sem contagem regressiva neste modo
@@ -330,21 +332,30 @@ class BotWorker(threading.Thread):
 
         while self.running:
             try:
-                # 1. Captura de tela
-                screenshot    = pyautogui.screenshot()
+                # 1. Configs dinâmicas
+                sens = self.config.get("sensitivity_number", 0.65)
+                use_region = self.config.get("use_search_region", False)
+                search_region = self.config.get("search_region", None) if use_region else None
+
+                # 2. Captura de tela (completa ou região restrita)
+                if search_region:
+                    # search_region formato: [x, y, w, h]
+                    x_r, y_r, w_r, h_r = search_region
+                    screenshot = pyautogui.screenshot(region=(x_r, y_r, w_r, h_r))
+                else:
+                    screenshot = pyautogui.screenshot()
+                
                 screenshot_np = np.array(screenshot)
                 frame_gray    = cv2.cvtColor(screenshot_np, cv2.COLOR_RGB2GRAY)
 
-                sens = self.config.get("sensitivity", 0.8)  # leitura dinâmica
-
-                # 2. Localiza o número na tela usando template matching em tons de cinza
+                # 3. Localiza o número usando template matching
                 num_pos, num_conf = self._find_image_in_frame(frame_gray, number_path, sens)
 
                 is_red_signal = False
                 red_pixel_count = 0
 
                 if num_pos:
-                    # 3. Se encontrou, verifica se a região correspondente na tela é vermelha
+                    # Se encontrou, verifica se a região correspondente na tela é vermelha
                     center_x, center_y = num_pos
                     
                     # Lê dimensões do template
@@ -372,10 +383,11 @@ class BotWorker(threading.Thread):
                 now = time.time()
                 if now - last_log_time > 3.0:
                     status_str = "Vermelho" if is_red_signal else "Não Vermelho"
+                    region_str = f"Região {search_region}" if search_region else "Tela Cheia"
                     if num_pos:
-                        self.log(f"[Busca Número] Encontrado (conf={num_conf:.2f}, sens={sens:.2f}) | Estado: {status_str} (pixels vermelhos={red_pixel_count})")
+                        self.log(f"[Busca Número] Encontrado em {region_str} (conf={num_conf:.2f}, sens={sens:.2f}) | Estado: {status_str} (pixels vermelhos={red_pixel_count})")
                     else:
-                        self.log(f"[Busca Número] Não encontrado (conf={num_conf:.2f}, sens={sens:.2f})")
+                        self.log(f"[Busca Número] Não encontrado em {region_str} (conf={num_conf:.2f}, sens={sens:.2f})")
                     last_log_time = now
 
                 if num_pos and is_red_signal:
@@ -411,8 +423,32 @@ class BotWorker(threading.Thread):
             
             self.click_count += 1
             self.on_click_cb(self.click_count)
+            if self.on_finance_cb:
+                self.on_finance_cb(self.current_profit, self.click_count)
+                
             self.log(f"Botao encontrado (Confianca: {conf:.2f}), clicado em ({x}, {y}).")
             self.play_sound("click")
+            
+            # Limite Modo Livre (Entradas)
+            finance_mode = self.config.get("finance_mode", "target")
+            if finance_mode == "free":
+                limit_entries = self.config.get("free_entries", 10)
+                if self.click_count >= limit_entries:
+                    self.log(f"Limite de Entradas atingido ({self.click_count}/{limit_entries} em Modo Livre)! Parando bot...")
+                    self.on_stop_limit_cb("entries", self.click_count)
+                    
+                    # Notificacao Telegram Limite de Entradas
+                    stop_free_msg = (
+                        "🏁 <b>LIMITE DE ENTRADAS ALCANÇADO!</b>\n"
+                        "━━━━━━━━━━━━━━━━━━\n"
+                        f"📊 <b>Total de Entradas:</b> {self.click_count}\n"
+                        f"💰 <b>Saldo Final:</b> ${self.current_profit:.2f}\n"
+                        f"📈 <b>Assertividade Final:</b> {(self.win_count / (self.win_count + self.loss_count) * 100) if (self.win_count + self.loss_count) > 0 else 0.0:.1f}%\n"
+                        "━━━━━━━━━━━━━━━━━━"
+                    )
+                    telegram_sender.send_telegram_msg(self.config, stop_free_msg, self.log)
+                    time.sleep(2)
+                    self.stop_bot()
         else:
             self.log(f"Botao de clique nao encontrado (Maior confianca: {conf:.2f}).")
 
@@ -469,7 +505,13 @@ class BotWorker(threading.Thread):
                         self.win_detected_state = True
                         
                         self.on_win_cb(self.win_count)
-                        self.log(f"WIN detectado! (Confianca: {win_conf:.2f}) - Wins Totais: {self.win_count}")
+                        
+                        # Atualiza Saldo Financeiro
+                        self.current_profit += self.config.get("win_value", 1.50)
+                        if self.on_finance_cb:
+                            self.on_finance_cb(self.current_profit, self.click_count)
+                        
+                        self.log(f"WIN detectado! (Confianca: {win_conf:.2f}) - Wins Totais: {self.win_count} | Saldo: ${self.current_profit:.2f}")
                         self.play_sound("win")
                         self.save_result_to_history("WIN")
                         self.take_screenshot_from_frame(screenshot, "win")
@@ -482,6 +524,7 @@ class BotWorker(threading.Thread):
                             "━━━━━━━━━━━━━━━━━━\n"
                             "🏆 <b>Resultado:</b> VITÓRIA!\n"
                             f"🔥 <b>Confiança:</b> {win_conf:.2f}\n"
+                            f"💰 <b>Saldo Atual:</b> ${self.current_profit:.2f}\n"
                             "📊 <b>Placar Geral:</b>\n"
                             f"├─ Wins: {self.win_count}\n"
                             f"└─ Losses: {self.loss_count}\n"
@@ -489,6 +532,28 @@ class BotWorker(threading.Thread):
                             "━━━━━━━━━━━━━━━━━━"
                         )
                         telegram_sender.send_telegram_msg(self.config, win_msg, self.log)
+                        
+                        # Limite Meta de Lucro
+                        finance_mode = self.config.get("finance_mode", "target")
+                        if finance_mode == "target":
+                            target = self.config.get("target_profit", 10.00)
+                            if self.current_profit >= target:
+                                self.log(f"Meta de Lucro Atingida (${self.current_profit:.2f} >= ${target:.2f})! Parando bot...")
+                                self.on_stop_limit_cb("profit_win", self.current_profit)
+                                
+                                stop_target_msg = (
+                                    "💰 <b>META DE LUCRO ALCANÇADA!</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━\n"
+                                    f"✅ <b>Saldo Final:</b> ${self.current_profit:.2f}\n"
+                                    f"🎯 <b>Meta Definida:</b> ${target:.2f}\n"
+                                    f"📊 <b>Placar Geral:</b> {self.win_count} Wins - {self.loss_count} Losses\n"
+                                    f"📈 <b>Assertividade Final:</b> {rate:.1f}%\n"
+                                    "━━━━━━━━━━━━━━━━━━"
+                                )
+                                telegram_sender.send_telegram_msg(self.config, stop_target_msg, self.log)
+                                time.sleep(2)
+                                self.stop_bot()
+                                break
                         
                         if self.config.get("enable_stop_win", False) and self.win_count >= self.config.get("stop_win", 5):
                             self.log(f"Limite Stop Win atingido ({self.win_count} Wins)! Parando bot...")
@@ -521,7 +586,13 @@ class BotWorker(threading.Thread):
                         self.loss_detected_state = True
                         
                         self.on_loss_cb(self.loss_count)
-                        self.log(f"LOSS detectado! (Confianca: {loss_conf:.2f}) - Losses Totais: {self.loss_count}")
+                        
+                        # Atualiza Saldo Financeiro
+                        self.current_profit -= self.config.get("loss_value", 30.00)
+                        if self.on_finance_cb:
+                            self.on_finance_cb(self.current_profit, self.click_count)
+                            
+                        self.log(f"LOSS detectado! (Confianca: {loss_conf:.2f}) - Losses Totais: {self.loss_count} | Saldo: ${self.current_profit:.2f}")
                         self.play_sound("loss")
                         self.save_result_to_history("LOSS")
                         self.take_screenshot_from_frame(screenshot, "loss")
@@ -534,6 +605,7 @@ class BotWorker(threading.Thread):
                             "━━━━━━━━━━━━━━━━━━\n"
                             "💔 <b>Resultado:</b> DERROTA!\n"
                             f"🔥 <b>Confiança:</b> {loss_conf:.2f}\n"
+                            f"💰 <b>Saldo Atual:</b> ${self.current_profit:.2f}\n"
                             "📊 <b>Placar Geral:</b>\n"
                             f"├─ Wins: {self.win_count}\n"
                             f"└─ Losses: {self.loss_count}\n"

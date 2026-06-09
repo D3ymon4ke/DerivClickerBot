@@ -7,6 +7,7 @@
     "seq_interval": 2.0,
     "seq_wait": 20.0,
     "sensitivity": 0.8,
+    "sensitivity_number": 0.65,
     "play_sounds": true,
     "auto_screenshot": false,
     "save_log": true,
@@ -23,7 +24,14 @@
     "image_linered_path": "capturas/linered.png",
     "image_lineblue_path": "capturas/lineblue.png",
     "image_number_path": "capturas/number.png",
+    "search_region": null,
+    "use_search_region": false,
     "schedule_enabled": false,
     "schedule_date": "",
-    "schedule_time": ""
+    "schedule_time": "",
+    "win_value": 1.50,
+    "loss_value": 30.00,
+    "target_profit": 10.00,
+    "finance_mode": "target",
+    "free_entries": 10
 }
