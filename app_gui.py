@@ -126,6 +126,7 @@ class AppGui(ctk.CTk):
         self.bot = None
         self.hotkey_listener = None
         self.overlay = None
+        self.stop_reason = None
         
         # Reseta streaks
         self.max_win_streak = 0
@@ -1065,6 +1066,7 @@ class AppGui(ctk.CTk):
             return
             
         self._gui_setting_changed()  # Salva tudo antes de iniciar
+        self.stop_reason = None
         
         is_scheduled = self.switch_schedule.get() == 1
         if is_scheduled:
@@ -1121,6 +1123,7 @@ class AppGui(ctk.CTk):
         self.bot.start_bot()
 
     def btn_stop_clicked(self):
+        self.stop_reason = None
         if self.bot:
             self.bot.stop_bot()
             self.bot = None
@@ -1137,7 +1140,16 @@ class AppGui(ctk.CTk):
             self.after(0, self._handle_bot_stopped_external)
 
     def _handle_bot_stopped_external(self):
-        self.lbl_status_value.configure(text="PARADO", text_color=ACCENT_RED)
+        reason = getattr(self, "stop_reason", None)
+        if reason in ["win", "profit_win"]:
+            self.lbl_status_value.configure(text="STOP WIN", text_color=ACCENT_GREEN)
+        elif reason == "loss":
+            self.lbl_status_value.configure(text="STOP LOSS", text_color=ACCENT_RED)
+        elif reason == "entries":
+            self.lbl_status_value.configure(text="LIMIT ENTRADAS", text_color=ACCENT_BLUE)
+        else:
+            self.lbl_status_value.configure(text="PARADO", text_color=ACCENT_RED)
+            
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
         self.lbl_next_click.configure(text="Inativo", text_color="gray")
@@ -1146,6 +1158,7 @@ class AppGui(ctk.CTk):
 
     def _on_stop_limit(self, limit_type, count):
         """Chamado pelo BotWorker quando o Stop Win ou Stop Loss e atingido."""
+        self.stop_reason = limit_type
         self.after(0, lambda: self._show_stop_limit_popup(limit_type, count))
 
     def _show_stop_limit_popup(self, limit_type, count):

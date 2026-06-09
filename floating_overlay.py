@@ -180,6 +180,15 @@ class FloatingOverlay(ctk.CTkToplevel):
         elif status == "AGENDADO":
             self.status_dot.configure(text_color=ACCENT_YELLOW)
             self.lbl_status.configure(text="AGENDADO", text_color=ACCENT_YELLOW)
+        elif status in ["STOP WIN", "META BATIDA"]:
+            self.status_dot.configure(text_color=ACCENT_GREEN)
+            self.lbl_status.configure(text="STOP WIN", text_color=ACCENT_GREEN)
+        elif status == "STOP LOSS":
+            self.status_dot.configure(text_color=ACCENT_RED)
+            self.lbl_status.configure(text="STOP LOSS", text_color=ACCENT_RED)
+        elif status in ["LIMIT ENTRADAS", "LIMITE ENTRADAS"]:
+            self.status_dot.configure(text_color=ACCENT_BLUE)
+            self.lbl_status.configure(text="LIMIT ENTRADAS", text_color=ACCENT_BLUE)
         else:
             self.status_dot.configure(text_color=ACCENT_RED)
             self.lbl_status.configure(text="PARADO", text_color=ACCENT_RED)
