@@ -690,13 +690,29 @@ class AppGui(ctk.CTk):
         self.btn_settings.pack(fill="x", padx=15, pady=(10, 0))
 
     def _build_right_panel(self):
-        # Painel direito — scrollável para não cortar conteúdo
+        # Cria a Tabview principal no lado direito
+        self.right_tabview = ctk.CTkTabview(
+            self,
+            fg_color="transparent",
+            segmented_button_selected_color=ACCENT_BLUE,
+            segmented_button_selected_hover_color="#2563eb",
+            segmented_button_unselected_color="#1e293b",
+            segmented_button_unselected_hover_color="#334155",
+            text_color="#ffffff"
+        )
+        self.right_tabview.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        
+        # Cria as abas
+        self.right_tabview.add("Configurações & Painel")
+        self.right_tabview.add("Dashboard Estatístico")
+        
+        # Painel direito — scrollável para não cortar conteúdo (agora dentro da aba de configurações)
         right_frame = ctk.CTkScrollableFrame(
-            self, fg_color="transparent",
+            self.right_tabview.tab("Configurações & Painel"), fg_color="transparent",
             scrollbar_button_color="#334155",
             scrollbar_button_hover_color="#475569"
         )
-        right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        right_frame.pack(fill="both", expand=True)
 
         # Titulo da Secao de Configs
         lbl_configs = ctk.CTkLabel(right_frame, text="Painel de Controle & Configurações", font=ctk.CTkFont(size=16, weight="bold"))
@@ -917,6 +933,343 @@ class AppGui(ctk.CTk):
         self.txt_log = ctk.CTkTextbox(console_frame.content_frame, font=ctk.CTkFont(family="Consolas", size=12), text_color="#f8fafc", fg_color="#000000", border_color="#334155", border_width=1)
         self.txt_log.pack(fill="both", expand=True, padx=15, pady=(0, 15))
         self.txt_log.configure(state="disabled")
+        
+        # Constrói a aba do dashboard
+        self._build_dashboard_tab()
+
+    def _build_dashboard_tab(self):
+        tab_dash = self.right_tabview.tab("Dashboard Estatístico")
+        
+        # Frame scrollable para o dashboard
+        dash_frame = ctk.CTkScrollableFrame(
+            tab_dash, fg_color="transparent",
+            scrollbar_button_color="#334155",
+            scrollbar_button_hover_color="#475569"
+        )
+        dash_frame.pack(fill="both", expand=True)
+        
+        # Titulo da Aba
+        lbl_dash_title = ctk.CTkLabel(dash_frame, text="Dashboard Estatístico Avançado", font=ctk.CTkFont(size=18, weight="bold"))
+        lbl_dash_title.pack(anchor="w", pady=(10, 15))
+        
+        # Container de duas colunas usando Grid
+        grid_container = ctk.CTkFrame(dash_frame, fg_color="transparent")
+        grid_container.pack(fill="x", expand=True, pady=(0, 15))
+        grid_container.grid_columnconfigure(0, weight=1, minsize=260)
+        grid_container.grid_columnconfigure(1, weight=1, minsize=260)
+        
+        # --- COLUNA 1: METRICAS E CONVERSOR ---
+        col1 = ctk.CTkFrame(grid_container, fg_color="transparent")
+        col1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        
+        # Card: Streak de Wins Consecutivos
+        card_streak_wins = ctk.CTkFrame(col1, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        card_streak_wins.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(card_streak_wins, text="SEQUÊNCIA DIÁRIA DE WINS", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 2))
+        self.lbl_streak_wins_val = ctk.CTkLabel(card_streak_wins, text="0 dias (Recorde: 0)", font=ctk.CTkFont(size=16, weight="bold"), text_color=ACCENT_GREEN)
+        self.lbl_streak_wins_val.pack(pady=(0, 10))
+        
+        # Card: Streak de Metas Consecutivas
+        card_streak_target = ctk.CTkFrame(col1, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        card_streak_target.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(card_streak_target, text="METAS DIÁRIAS CONSECUTIVAS", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 2))
+        self.lbl_streak_target_val = ctk.CTkLabel(card_streak_target, text="0 dias (Recorde: 0)", font=ctk.CTkFont(size=16, weight="bold"), text_color=ACCENT_BLUE)
+        self.lbl_streak_target_val.pack(pady=(0, 10))
+        
+        # Card: Fim do Mês
+        card_end_month = ctk.CTkFrame(col1, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        card_end_month.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(card_end_month, text="TEMPO RESTANTE DO MÊS", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 2))
+        self.lbl_end_month_val = ctk.CTkLabel(card_end_month, text="-- dias, --h --m", font=ctk.CTkFont(size=15, weight="bold"), text_color=ACCENT_YELLOW)
+        self.lbl_end_month_val.pack(pady=(0, 10))
+        
+        # Card: Conversor USD -> BRL
+        card_converter = ctk.CTkFrame(col1, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        card_converter.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(card_converter, text="CONVERSOR DE COTAÇÃO (USD/BRL)", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 5))
+        
+        # USD input
+        row_usd = ctk.CTkFrame(card_converter, fg_color="transparent")
+        row_usd.pack(fill="x", padx=15, pady=2)
+        ctk.CTkLabel(row_usd, text="USD ($):", font=ctk.CTkFont(size=11), width=65, anchor="w").pack(side="left")
+        self.entry_conv_usd = ctk.CTkEntry(row_usd, height=24, font=ctk.CTkFont(size=11))
+        self.entry_conv_usd.pack(side="right", fill="x", expand=True)
+        self.entry_conv_usd.insert(0, "1.00")
+        
+        # BRL output/input
+        row_brl = ctk.CTkFrame(card_converter, fg_color="transparent")
+        row_brl.pack(fill="x", padx=15, pady=2)
+        ctk.CTkLabel(row_brl, text="BRL (R$):", font=ctk.CTkFont(size=11), width=65, anchor="w").pack(side="left")
+        self.entry_conv_brl = ctk.CTkEntry(row_brl, height=24, font=ctk.CTkFont(size=11))
+        self.entry_conv_brl.pack(side="right", fill="x", expand=True)
+        
+        # Cotação info e botão de atualização
+        self.usd_rate = 5.20 # default rate
+        row_rate_info = ctk.CTkFrame(card_converter, fg_color="transparent")
+        row_rate_info.pack(fill="x", padx=15, pady=(5, 10))
+        self.lbl_rate_info = ctk.CTkLabel(row_rate_info, text="Taxa: R$ 5.20", font=ctk.CTkFont(size=9), text_color="gray")
+        self.lbl_rate_info.pack(side="left")
+        btn_update_rate = ctk.CTkButton(row_rate_info, text="Atualizar", width=60, height=18, font=ctk.CTkFont(size=9), fg_color="#334155", hover_color="#475569", command=self.fetch_usd_rate)
+        btn_update_rate.pack(side="right")
+        
+        # Bind bi-direcional nos conversores
+        self.entry_conv_usd.bind("<KeyRelease>", self._on_usd_changed)
+        self.entry_conv_brl.bind("<KeyRelease>", self._on_brl_changed)
+        
+        # --- COLUNA 2: ESTATISTICAS HORARIAS E HISTORICO ---
+        col2 = ctk.CTkFrame(grid_container, fg_color="transparent")
+        col2.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        
+        # Card: Horário mais operado
+        card_peak_hour = ctk.CTkFrame(col2, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        card_peak_hour.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(card_peak_hour, text="HORÁRIO COM MAIS OPERAÇÕES", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 2))
+        self.lbl_peak_hour_val = ctk.CTkLabel(card_peak_hour, text="Nenhum registro", font=ctk.CTkFont(size=15, weight="bold"), text_color="#ffffff")
+        self.lbl_peak_hour_val.pack(pady=(0, 10))
+        
+        # Card: Horário mais assertivo (Wins sem Loss)
+        card_assertive_hour = ctk.CTkFrame(col2, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        card_assertive_hour.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(card_assertive_hour, text="PERÍODO MAIS ASSERTIVO", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 2))
+        self.lbl_assertive_hour_val = ctk.CTkLabel(card_assertive_hour, text="Nenhum registro", font=ctk.CTkFont(size=15, weight="bold"), text_color=ACCENT_GREEN)
+        self.lbl_assertive_hour_val.pack(pady=(0, 10))
+        
+        # Card: Histórico de Operações Recentes
+        card_history = ctk.CTkFrame(col2, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        card_history.pack(fill="both", expand=True, pady=(0, 10))
+        ctk.CTkLabel(card_history, text="HISTÓRICO RECENTE (ÚLTIMAS 50)", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 5))
+        
+        self.history_list_frame = ctk.CTkScrollableFrame(card_history, fg_color="#000000", height=180, border_color="#334155", border_width=1)
+        self.history_list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        # Inicializa cotação em tempo real e atualiza dados do dashboard
+        self.fetch_usd_rate()
+        self.update_dashboard_stats()
+
+    def _on_usd_changed(self, event):
+        try:
+            val_str = self.entry_conv_usd.get().replace(",", ".")
+            if not val_str:
+                self.entry_conv_brl.delete(0, "end")
+                return
+            val_usd = float(val_str)
+            val_brl = val_usd * self.usd_rate
+            self.entry_conv_brl.delete(0, "end")
+            self.entry_conv_brl.insert(0, f"{val_brl:.2f}")
+        except ValueError:
+            pass
+
+    def _on_brl_changed(self, event):
+        try:
+            val_str = self.entry_conv_brl.get().replace(",", ".")
+            if not val_str:
+                self.entry_conv_usd.delete(0, "end")
+                return
+            val_brl = float(val_str)
+            val_usd = val_brl / self.usd_rate
+            self.entry_conv_usd.delete(0, "end")
+            self.entry_conv_usd.insert(0, f"{val_usd:.2f}")
+        except ValueError:
+            pass
+
+    def update_converter_ui(self):
+        self.lbl_rate_info.configure(text=f"Taxa: R$ {self.usd_rate:.2f}")
+        self._on_usd_changed(None)
+
+    def fetch_usd_rate(self):
+        def run():
+            try:
+                import urllib.request
+                import json
+                req = urllib.request.Request(
+                    "https://economia.awesomeapi.com.br/json/last/USD-BRL",
+                    headers={'User-Agent': 'Mozilla/5.0'}
+                )
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    data = json.loads(response.read().decode())
+                    bid = float(data["USDBRL"]["bid"])
+                    self.usd_rate = bid
+                    self.after(0, self.update_converter_ui)
+            except Exception:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+
+    def update_dashboard_stats(self):
+        import csv
+        import calendar
+        
+        # 1. Calcula tempo restante do mês
+        now = datetime.datetime.now()
+        _, last_day = calendar.monthrange(now.year, now.month)
+        end_of_month = datetime.datetime(now.year, now.month, last_day, 23, 59, 59)
+        delta = end_of_month - now
+        days = delta.days
+        hours = delta.seconds // 3600
+        minutes = (delta.seconds % 3600) // 60
+        self.lbl_end_month_val.configure(text=f"{days} dias, {hours:02d}h {minutes:02d}m")
+        
+        # 2. Processa histórico de operações
+        history_file = "wins_history.csv"
+        if not os.path.exists(history_file):
+            for widget in self.history_list_frame.winfo_children():
+                widget.destroy()
+            ctk.CTkLabel(self.history_list_frame, text="Nenhum registro encontrado.", text_color="gray", font=ctk.CTkFont(size=11)).pack(pady=10)
+            return
+
+        trades = []
+        try:
+            with open(history_file, "r", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                next(reader, None) # ignora header
+                for row in reader:
+                    if len(row) >= 2:
+                        trades.append(row)
+        except Exception:
+            return
+            
+        if not trades:
+            for widget in self.history_list_frame.winfo_children():
+                widget.destroy()
+            ctk.CTkLabel(self.history_list_frame, text="Nenhum registro encontrado.", text_color="gray", font=ctk.CTkFont(size=11)).pack(pady=10)
+            return
+            
+        # Atualiza a lista visual das últimas 50
+        for widget in self.history_list_frame.winfo_children():
+            widget.destroy()
+            
+        recent_trades = list(reversed(trades))[:50]
+        for t in recent_trades:
+            date_time = t[0]
+            res = t[1].upper()
+            win_val = self.config.get("win_value", 1.50)
+            loss_val = self.config.get("loss_value", 30.00)
+            
+            if "WIN" in res:
+                color = ACCENT_GREEN
+                symbol = "🟢 WIN"
+                diff = f"+${win_val:.2f}"
+            else:
+                color = ACCENT_RED
+                symbol = "🔴 LOSS"
+                diff = f"-${loss_val:.2f}"
+                
+            row_frame = ctk.CTkFrame(self.history_list_frame, fg_color="transparent")
+            row_frame.pack(fill="x", pady=2)
+            
+            ctk.CTkLabel(row_frame, text=symbol, text_color=color, font=ctk.CTkFont(weight="bold", size=11), width=65, anchor="w").pack(side="left")
+            ctk.CTkLabel(row_frame, text=date_time, text_color="gray", font=ctk.CTkFont(size=11)).pack(side="left", padx=10)
+            ctk.CTkLabel(row_frame, text=diff, text_color=color, font=ctk.CTkFont(weight="bold", size=11)).pack(side="right")
+            
+        # 3. Agrupamento Diário (Streaks)
+        daily_stats = {}
+        hourly_stats = {}
+        
+        for t in trades:
+            try:
+                dt_str = t[0]
+                date_str = dt_str.split()[0]
+                time_part = dt_str.split()[1]
+                hour = int(time_part.split(":")[0])
+                res = t[1].upper()
+                
+                # Daily grouping
+                if date_str not in daily_stats:
+                    daily_stats[date_str] = {"wins": 0, "losses": 0}
+                if "WIN" in res:
+                    daily_stats[date_str]["wins"] += 1
+                else:
+                    daily_stats[date_str]["losses"] += 1
+                    
+                # Hourly grouping
+                if hour not in hourly_stats:
+                    hourly_stats[hour] = {"wins": 0, "losses": 0, "total": 0}
+                hourly_stats[hour]["total"] += 1
+                if "WIN" in res:
+                    hourly_stats[hour]["wins"] += 1
+                else:
+                    hourly_stats[hour]["losses"] += 1
+            except Exception:
+                continue
+                
+        # Calcula sequências
+        sorted_dates = sorted(daily_stats.keys())
+        
+        # Sequência de dias com Wins líquidos positivos
+        win_days = []
+        win_val = self.config.get("win_value", 1.50)
+        loss_val = self.config.get("loss_value", 30.00)
+        for d in sorted_dates:
+            w = daily_stats[d]["wins"]
+            l = daily_stats[d]["losses"]
+            net = (w * win_val) - (l * loss_val)
+            win_days.append(net > 0)
+            
+        max_streak = 0
+        current_streak = 0
+        for is_win in win_days:
+            if is_win:
+                current_streak += 1
+                if current_streak > max_streak:
+                    max_streak = current_streak
+            else:
+                current_streak = 0
+                
+        end_streak = 0
+        for is_win in reversed(win_days):
+            if is_win:
+                end_streak += 1
+            else:
+                break
+        self.lbl_streak_wins_val.configure(text=f"{end_streak} dias (Recorde: {max_streak})")
+        
+        # Sequência de metas batidas
+        target_val = self.config.get("target_profit", 10.00)
+        target_days = []
+        for d in sorted_dates:
+            w = daily_stats[d]["wins"]
+            l = daily_stats[d]["losses"]
+            net = (w * win_val) - (l * loss_val)
+            target_days.append(net >= target_val)
+            
+        max_target_streak = 0
+        current_target_streak = 0
+        for is_target in target_days:
+            if is_target:
+                current_target_streak += 1
+                if current_target_streak > max_target_streak:
+                    max_target_streak = current_target_streak
+            else:
+                current_target_streak = 0
+                
+        end_target_streak = 0
+        for is_target in reversed(target_days):
+            if is_target:
+                end_target_streak += 1
+            else:
+                break
+        self.lbl_streak_target_val.configure(text=f"{end_target_streak} dias (Recorde: {max_target_streak})")
+        
+        # 4. Estatísticas de Horário
+        if hourly_stats:
+            peak_hour = max(hourly_stats.keys(), key=lambda h: hourly_stats[h]["total"])
+            peak_count = hourly_stats[peak_hour]["total"]
+            self.lbl_peak_hour_val.configure(text=f"{peak_hour:02d}:00 - {peak_hour+1:02d}:00 ({peak_count} ops)")
+        else:
+            self.lbl_peak_hour_val.configure(text="Nenhum registro")
+            
+        # Horário mais assertivo (mínimo 3 operações)
+        valid_hours = [h for h, stat in hourly_stats.items() if stat["total"] >= 3]
+        if valid_hours:
+            best_hour = max(valid_hours, key=lambda h: (hourly_stats[h]["wins"] / hourly_stats[h]["total"]))
+            win_rate = (hourly_stats[best_hour]["wins"] / hourly_stats[best_hour]["total"]) * 100
+            self.lbl_assertive_hour_val.configure(text=f"{best_hour:02d}:00 - {best_hour+1:02d}:00 ({win_rate:.1f}% Win)")
+        else:
+            if hourly_stats:
+                best_hour = max(hourly_stats.keys(), key=lambda h: (hourly_stats[h]["wins"] / hourly_stats[h]["total"]))
+                win_rate = (hourly_stats[best_hour]["wins"] / hourly_stats[best_hour]["total"]) * 100
+                self.lbl_assertive_hour_val.configure(text=f"{best_hour:02d}:00 - {best_hour+1:02d}:00 ({win_rate:.1f}% Win)")
+            else:
+                self.lbl_assertive_hour_val.configure(text="Nenhum registro")
 
     # --- LISTENER DE MUDANCA DE CONTROLES ---
     def _mode_selection_changed(self, value):
@@ -1651,6 +2004,7 @@ class AppGui(ctk.CTk):
             self.max_win_streak = self.current_win_streak
             
         self._update_overlay_data()
+        self.update_dashboard_stats()
 
     def update_losses_metric(self, loss_count):
         self.after(0, lambda: self._update_losses_on_ui(loss_count))
@@ -1666,6 +2020,7 @@ class AppGui(ctk.CTk):
             self.max_loss_streak = self.current_loss_streak
             
         self._update_overlay_data()
+        self.update_dashboard_stats()
 
     def _update_assertiveness_rate(self):
         try:
@@ -1750,6 +2105,14 @@ class AppGui(ctk.CTk):
             
         # Repassa alteracoes ao overlay em tempo real
         self._update_overlay_data()
+        
+        # Atualiza estatísticas do dashboard de forma lenta (a cada 5 segundos)
+        if not hasattr(self, "_slow_update_counter"):
+            self._slow_update_counter = 0
+        self._slow_update_counter += 1
+        if self._slow_update_counter >= 50:
+            self._slow_update_counter = 0
+            self.update_dashboard_stats()
         
         # Roda novamente em 100ms para manter contagem fluida
         self.after(100, self.update_gui_loop)
