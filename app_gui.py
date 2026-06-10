@@ -232,6 +232,11 @@ class AppGui(ctk.CTk):
         self.bind_all("<Key-o>", lambda e: self.toggle_overlay())
         self.bind_all("<Key-O>", lambda e: self.toggle_overlay())
         
+        # Inicia o listener de comandos do Telegram em segundo plano
+        self.tg_listener_running = True
+        self.tg_listener_thread = threading.Thread(target=self._telegram_listener_loop, daemon=True)
+        self.tg_listener_thread.start()
+        
         # Timer e contadores locais para interface
         self.start_time = 0
         self.next_click_deadline = 0
@@ -952,6 +957,16 @@ class AppGui(ctk.CTk):
         lbl_dash_title = ctk.CTkLabel(dash_frame, text="Dashboard Estatístico Avançado", font=ctk.CTkFont(size=18, weight="bold"))
         lbl_dash_title.pack(anchor="w", pady=(10, 15))
         
+        # Card do Gráfico de Lucros
+        self.chart_card = ctk.CTkFrame(dash_frame, fg_color=CARD_BG, border_color="#334155", border_width=1)
+        self.chart_card.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(self.chart_card, text="CURVA DE LUCRO DAS ÚLTIMAS 30 OPERAÇÕES", font=ctk.CTkFont(size=10, weight="bold"), text_color="gray").pack(pady=(10, 5))
+        
+        self.chart_canvas = ctk.CTkCanvas(self.chart_card, bg="#0b0f19", highlightthickness=0, height=130)
+        self.chart_canvas.pack(fill="x", padx=15, pady=(0, 15))
+        self.chart_canvas.bind("<Configure>", lambda e: self.draw_profit_chart())
+        
         # Container de duas colunas usando Grid
         grid_container = ctk.CTkFrame(dash_frame, fg_color="transparent")
         grid_container.pack(fill="x", expand=True, pady=(0, 15))
@@ -1270,6 +1285,208 @@ class AppGui(ctk.CTk):
                 self.lbl_assertive_hour_val.configure(text=f"{best_hour:02d}:00 - {best_hour+1:02d}:00 ({win_rate:.1f}% Win)")
             else:
                 self.lbl_assertive_hour_val.configure(text="Nenhum registro")
+                
+        # Desenha o gráfico de curva de lucros
+        self.draw_profit_chart()
+
+    def draw_profit_chart(self):
+        w = self.chart_canvas.winfo_width()
+        h = self.chart_canvas.winfo_height()
+        
+        if w < 10 or h < 10:
+            return
+            
+        self.chart_canvas.delete("all")
+        
+        # 1. Carrega dados do wins_history.csv
+        history_file = "wins_history.csv"
+        trades = []
+        if os.path.exists(history_file):
+            try:
+                import csv
+                with open(history_file, "r", encoding="utf-8") as f:
+                    reader = csv.reader(f)
+                    next(reader, None) # ignora header
+                    for row in reader:
+                        if len(row) >= 2:
+                            trades.append(row)
+            except Exception:
+                pass
+                
+        if not trades:
+            self.chart_canvas.create_text(
+                w / 2, h / 2,
+                text="Aguardando as primeiras operações para desenhar o gráfico...",
+                fill="gray",
+                font=ctk.CTkFont(size=11)
+            )
+            return
+            
+        # 2. Constrói os lucros acumulados (últimos 30)
+        profits = [0.0]
+        current = 0.0
+        win_val = self.config.get("win_value", 1.50)
+        loss_val = self.config.get("loss_value", 30.00)
+        
+        for t in trades[-30:]:
+            res = t[1].upper()
+            if "WIN" in res:
+                current += win_val
+            else:
+                current -= loss_val
+            profits.append(current)
+            
+        # 3. Desenha os elementos do gráfico
+        pad_x = 45
+        pad_y = 20
+        n = len(profits)
+        
+        dx = (w - 2 * pad_x) / (n - 1) if n > 1 else w - 2 * pad_x
+        min_p = min(profits)
+        max_p = max(profits)
+        
+        if max_p == min_p:
+            min_p -= 1.0
+            max_p += 1.0
+            
+        dy = (h - 2 * pad_y) / (max_p - min_p)
+        
+        # Linha horizontal do zero
+        if min_p <= 0.0 <= max_p:
+            y_zero = h - pad_y - (0.0 - min_p) * dy
+            self.chart_canvas.create_line(pad_x, y_zero, w - pad_x, y_zero, fill="#1e293b", width=1)
+            self.chart_canvas.create_text(pad_x - 10, y_zero, text="$0.0", fill="gray", font=("Consolas", 8), anchor="e")
+            
+        # Textos Y
+        self.chart_canvas.create_text(pad_x - 10, pad_y, text=f"${max_p:.1f}", fill="gray", font=("Consolas", 8), anchor="e")
+        self.chart_canvas.create_text(pad_x - 10, h - pad_y, text=f"${min_p:.1f}", fill="gray", font=("Consolas", 8), anchor="e")
+        
+        points = []
+        for i, p in enumerate(profits):
+            x = pad_x + i * dx
+            y = h - pad_y - (p - min_p) * dy
+            points.append((x, y))
+            
+        is_positive = profits[-1] >= 0.0
+        line_color = ACCENT_GREEN if is_positive else ACCENT_RED
+        glow_color = "#34d399" if is_positive else "#f87171"
+        
+        # Desenha a linha neon
+        for i in range(len(points) - 1):
+            x1, y1 = points[i]
+            x2, y2 = points[i+1]
+            self.chart_canvas.create_line(x1, y1, x2, y2, fill=line_color, width=3, smooth=True)
+            self.chart_canvas.create_line(x1, y1, x2, y2, fill=glow_color, width=1, smooth=True)
+            
+        # Desenha nós
+        for x, y in points:
+            self.chart_canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill="#0b0f19", outline=glow_color, width=1)
+
+    def _telegram_listener_loop(self):
+        import time
+        import urllib.request
+        import urllib.parse
+        import json
+        
+        last_update_id = 0
+        self.tg_listener_running = True
+        
+        while self.tg_listener_running:
+            enabled = self.config.get("telegram_enabled", False)
+            token = self.config.get("telegram_token", "").strip()
+            chat_id = self.config.get("telegram_chat_id", "").strip()
+            
+            if not enabled or not token or not chat_id:
+                time.sleep(2)
+                continue
+                
+            try:
+                url = f"https://api.telegram.org/bot{token}/getUpdates?offset={last_update_id}&timeout=10"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    data = json.loads(response.read().decode())
+                    if data.get("ok"):
+                        for update in data.get("result", []):
+                            last_update_id = update["update_id"] + 1
+                            message = update.get("message")
+                            if not message:
+                                continue
+                                
+                            from_chat_id = str(message.get("chat", {}).get("id"))
+                            if from_chat_id != chat_id:
+                                continue
+                                
+                            text = message.get("text", "").strip()
+                            if text.startswith("/"):
+                                self._handle_telegram_command(text)
+            except Exception:
+                time.sleep(5)
+
+    def _handle_telegram_command(self, cmd):
+        cmd = cmd.lower()
+        if cmd == "/status":
+            self.after(0, self._send_telegram_status_reply)
+        elif cmd == "/parar":
+            self.after(0, self._execute_telegram_stop)
+        elif cmd == "/config":
+            self.after(0, self._send_telegram_config_reply)
+
+    def _send_telegram_status_reply(self):
+        is_running = self.bot and self.bot.running
+        status_str = "EXECUTANDO 🟢" if is_running else "PARADO 🔴"
+        
+        wins = self.lbl_metric_wins.cget("text")
+        losses = self.lbl_metric_losses.cget("text")
+        clicks = self.lbl_metric_clicks.cget("text")
+        assertiveness = self.lbl_metric_assert.cget("text")
+        
+        profit = 0.0
+        if self.bot:
+            profit = getattr(self.bot, "current_profit", 0.0)
+            
+        elapsed_str = "00:00:00"
+        if is_running:
+            elapsed = time.time() - self.start_time
+            hours, remainder = divmod(int(elapsed), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            elapsed_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+        msg = (
+            f"📊 <b>Status do DerivClickerBot</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Status:</b> {status_str}\n"
+            f"• <b>Saldo Atual:</b> ${profit:.2f}\n"
+            f"• <b>Wins:</b> {wins} | <b>Losses:</b> {losses}\n"
+            f"• <b>Assertividade:</b> {assertiveness}\n"
+            f"• <b>Cliques:</b> {clicks}\n"
+            f"• <b>Tempo Ativo:</b> {elapsed_str}"
+        )
+        telegram_sender.send_telegram_msg(self.config, msg, self.log_message)
+
+    def _execute_telegram_stop(self):
+        is_running = self.bot and self.bot.running
+        if is_running:
+            self.btn_stop_clicked()
+            msg = "🛑 <b>Comando recebido: O bot foi PARADO com sucesso!</b>"
+        else:
+            msg = "⚠️ <b>O bot já está parado.</b>"
+        telegram_sender.send_telegram_msg(self.config, msg, self.log_message)
+
+    def _send_telegram_config_reply(self):
+        mode = self.seg_mode.get()
+        target = self.config.get("target_profit", 10.00)
+        win_val = self.config.get("win_value", 1.50)
+        loss_val = self.config.get("loss_value", 30.00)
+        
+        msg = (
+            f"⚙️ <b>Configurações do DerivClickerBot</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Modo Ativo:</b> {mode}\n"
+            f"• <b>Meta de Lucro (Stop Win):</b> ${target:.2f}\n"
+            f"• <b>Valor por Win:</b> ${win_val:.2f}\n"
+            f"• <b>Limite por Loss:</b> ${loss_val:.2f}"
+        )
+        telegram_sender.send_telegram_msg(self.config, msg, self.log_message)
 
     # --- LISTENER DE MUDANCA DE CONTROLES ---
     def _mode_selection_changed(self, value):
@@ -2261,6 +2478,7 @@ class AppGui(ctk.CTk):
 
     def destroy(self):
         # Finaliza threads ao fechar a janela
+        self.tg_listener_running = False
         if self.bot:
             self.bot.stop_bot()
         if self.webview_proc:
