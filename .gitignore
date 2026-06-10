@@ -13,6 +13,15 @@ capturas/historico/
 # Exclude standalone executable (for GitHub Releases)
 DerivClickerBot.exe
 
+# Release builds and zips
+macOS_Release/
+Windows_Release/
+*.zip
+build/
+dist/
+.deriv_webview_data/
+adaptive_session.json
+
 # OS specific files
 Thumbs.db
 Desktop.ini

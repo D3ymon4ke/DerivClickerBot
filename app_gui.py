@@ -14,12 +14,12 @@ from bot_worker import BotWorker
 from global_hotkey import GlobalHotkeyListener
 
 # Define cores esteticas modernas
-BG_DARK = "#000000"
+BG_DARK = "#05070c"
 ACCENT_GREEN = "#10b981"
-ACCENT_RED = "#ef4444"
-ACCENT_BLUE = "#3b82f6"
-ACCENT_YELLOW = "#f59e0b"
-CARD_BG = "#1e293b"
+ACCENT_RED = "#f43f5e"
+ACCENT_BLUE = "#38bdf8"
+ACCENT_YELLOW = "#fbbf24"
+CARD_BG = "#0f172a"
 
 class SplashScreen(ctk.CTkToplevel):
     def __init__(self, parent, image_path):
@@ -106,10 +106,10 @@ class ExecutionModeDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Modo de Execução")
-        self.geometry("380x220")
+        self.geometry("480x220")
         self.resizable(False, False)
-        self.configure(fg_color="#000000")
-        self.result = None # 'browser', 'derivclicker', or None
+        self.configure(fg_color=BG_DARK)
+        self.result = None # 'browser', 'derivclicker', 'stealth', or None
         
         self.transient(parent)
         self.grab_set()
@@ -119,7 +119,7 @@ class ExecutionModeDialog(ctk.CTkToplevel):
         parent_y = parent.winfo_y()
         parent_w = parent.winfo_width()
         parent_h = parent.winfo_height()
-        x = parent_x + (parent_w - 380) // 2
+        x = parent_x + (parent_w - 480) // 2
         y = parent_y + (parent_h - 220) // 2
         self.geometry(f"+{x}+{y}")
         
@@ -133,38 +133,55 @@ class ExecutionModeDialog(ctk.CTkToplevel):
         
         desc = ctk.CTkLabel(
             self, 
-            text="Selecione o modo de navegação para a Deriv:", 
+            text="Selecione o modo de navegação ou operação para a Deriv:", 
             font=ctk.CTkFont(size=12), 
             text_color="gray"
         )
         desc.pack(pady=(0, 20))
         
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20)
+        btn_frame.pack(fill="x", padx=15)
         
         btn_browser = ctk.CTkButton(
             btn_frame, 
             text="🌐 NAVEGADOR", 
-            fg_color="#1e293b", 
-            hover_color="#334155", 
-            font=ctk.CTkFont(size=12, weight="bold"),
-            width=160,
+            fg_color=CARD_BG, 
+            hover_color="#1e293b", 
+            border_color="#334155",
+            border_width=1,
+            corner_radius=8,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            width=140,
             height=40,
             command=self.select_browser
         )
-        btn_browser.pack(side="left", padx=5, expand=True)
+        btn_browser.pack(side="left", padx=4, expand=True)
         
         btn_dc = ctk.CTkButton(
             btn_frame, 
-            text="🤖 DERIVCLICKER", 
-            fg_color="#10b981", 
+            text="🤖 CLICKERBOT", 
+            fg_color=ACCENT_GREEN, 
             hover_color="#059669", 
-            font=ctk.CTkFont(size=12, weight="bold"),
-            width=160,
+            corner_radius=8,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            width=140,
             height=40,
             command=self.select_derivclicker
         )
-        btn_dc.pack(side="right", padx=5, expand=True)
+        btn_dc.pack(side="left", padx=4, expand=True)
+        
+        btn_stealth = ctk.CTkButton(
+            btn_frame, 
+            text="🥷 MODO STEALTH", 
+            fg_color="#7c3aed", 
+            hover_color="#6d28d9", 
+            corner_radius=8,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            width=140,
+            height=40,
+            command=self.select_stealth
+        )
+        btn_stealth.pack(side="left", padx=4, expand=True)
         
         btn_cancel = ctk.CTkButton(
             self, 
@@ -179,13 +196,16 @@ class ExecutionModeDialog(ctk.CTkToplevel):
         btn_cancel.pack(pady=(20, 10))
         
         parent.wait_window(self)
-        
     def select_browser(self):
         self.result = "browser"
         self.destroy()
         
     def select_derivclicker(self):
         self.result = "derivclicker"
+        self.destroy()
+        
+    def select_stealth(self):
+        self.result = "stealth"
         self.destroy()
         
     def cancel(self):
@@ -259,6 +279,7 @@ class AppGui(ctk.CTk):
         self.minsize(1024, 700)            # tamanho mínimo para que nada fique cortado
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
+        self.configure(fg_color="#090d16")
         
         # Garante foco ao abrir
         self.lift()
@@ -332,11 +353,13 @@ class AppGui(ctk.CTk):
     def _check_image_files(self):
         btn_path = self.config.get("image_button_path", "capturas/botao.png")
         win_path = self.config.get("image_win_path", "capturas/win.png")
+        win2_path = self.config.get("image_win2_path", "capturas/win2.png")
         loss_path = self.config.get("image_loss_path", "capturas/loss.png")
         number_path = self.config.get("image_number_path", "capturas/number.png")
         
         btn_exists = os.path.exists(btn_path)
         win_exists = os.path.exists(win_path)
+        win2_exists = os.path.exists(win2_path)
         loss_exists = os.path.exists(loss_path)
         number_exists = os.path.exists(number_path)
         
@@ -351,6 +374,11 @@ class AppGui(ctk.CTk):
         else:
             self.lbl_status_win_img.configure(text="win.png: Ausente", text_color=ACCENT_RED)
             self.log_message(f"[Alerta] Arquivo '{win_path}' nao encontrado na pasta do projeto!")
+            
+        if win2_exists:
+            self.lbl_status_win2_img.configure(text="win2.png: OK", text_color=ACCENT_GREEN)
+        else:
+            self.lbl_status_win2_img.configure(text="win2.png: Opcional (Ausente)", text_color=ACCENT_YELLOW)
 
         if loss_exists:
             self.lbl_status_loss_img.configure(text="loss.png: OK", text_color=ACCENT_GREEN)
@@ -385,6 +413,19 @@ class AppGui(ctk.CTk):
         self.entry_seq_interval.insert(0, f"{self.config.get('seq_interval', 2.0):.1f}")
         self.entry_seq_wait.delete(0, "end")
         self.entry_seq_wait.insert(0, f"{self.config.get('seq_wait', 20.0):.1f}")
+        
+        # Modo Adaptativo
+        self.entry_adaptive_obs.delete(0, "end")
+        self.entry_adaptive_obs.insert(0, str(self.config.get("adaptive_observation_minutes", 30)))
+        
+        self.entry_adaptive_events.delete(0, "end")
+        self.entry_adaptive_events.insert(0, str(self.config.get("adaptive_relearn_events", 100)))
+        
+        self.entry_adaptive_rep_min.delete(0, "end")
+        self.entry_adaptive_rep_min.insert(0, str(self.config.get("adaptive_relearn_minutes", 30)))
+        
+        self.entry_adaptive_losses.delete(0, "end")
+        self.entry_adaptive_losses.insert(0, str(self.config.get("adaptive_relearn_losses", 3)))
         
         # Sensibilidade (se janela de config estiver aberta)
         sens = self.config.get("sensitivity", 0.8)
@@ -435,6 +476,44 @@ class AppGui(ctk.CTk):
             self.seg_finance_mode.set("Livre")
             self.frame_finance_target.pack_forget()
             self.frame_finance_free.pack(fill="x", padx=15, pady=(0, 10))
+
+        # Entradas por Ciclo
+        cycle_enabled = self.config.get("cycle_enabled", False)
+        if cycle_enabled:
+            self.switch_cycle.select()
+        else:
+            self.switch_cycle.deselect()
+        self.entry_cycle_max_entries.delete(0, "end")
+        self.entry_cycle_max_entries.insert(0, str(self.config.get("cycle_max_entries", 4)))
+        self.entry_cycle_cooldown.delete(0, "end")
+        self.entry_cycle_cooldown.insert(0, str(self.config.get("cycle_cooldown_minutes", 60)))
+
+        # Deriv API Settings
+        deriv_api_token = self.config.get("deriv_api_token", "")
+        if hasattr(self, "settings_entry_api_token") and self.settings_entry_api_token and self.settings_entry_api_token.winfo_exists():
+            self.settings_entry_api_token.delete(0, "end")
+            self.settings_entry_api_token.insert(0, deriv_api_token)
+            
+        deriv_app_id = self.config.get("deriv_app_id", "1098")
+        if hasattr(self, "settings_entry_api_appid") and self.settings_entry_api_appid and self.settings_entry_api_appid.winfo_exists():
+            self.settings_entry_api_appid.delete(0, "end")
+            self.settings_entry_api_appid.insert(0, deriv_app_id)
+            
+        deriv_symbol = self.config.get("deriv_symbol", "R_100")
+        if hasattr(self, "settings_combo_api_symbol") and self.settings_combo_api_symbol and self.settings_combo_api_symbol.winfo_exists():
+            self.settings_combo_api_symbol.set(deriv_symbol)
+            
+        deriv_growth = self.config.get("deriv_growth_rate", 0.01) * 100.0
+        if hasattr(self, "settings_entry_api_growth") and self.settings_entry_api_growth and self.settings_entry_api_growth.winfo_exists():
+            self.settings_entry_api_growth.delete(0, "end")
+            self.settings_entry_api_growth.insert(0, f"{deriv_growth:.1f}")
+            
+        deriv_use_api = self.config.get("deriv_use_api_trading", False)
+        if hasattr(self, "settings_switch_use_api") and self.settings_switch_use_api and self.settings_switch_use_api.winfo_exists():
+            if deriv_use_api:
+                self.settings_switch_use_api.select()
+            else:
+                self.settings_switch_use_api.deselect()
 
         # Opcoes Extras (Janela de Configurações)
         play_sounds = self.config.get("play_sounds", True)
@@ -518,7 +597,8 @@ class AppGui(ctk.CTk):
             "fixed": "Intervalo Fixo",
             "random": "Intervalo Aleatório",
             "sequence": "Sequência de Cliques",
-            "linered": "Número Vermelho"
+            "linered": "Número Vermelho",
+            "adaptive": "Modo Inteligente"
         }
         return mapping.get(key, "Intervalo Fixo")
 
@@ -528,7 +608,8 @@ class AppGui(ctk.CTk):
             "Intervalo Aleatório": "random",
             "Sequência de Cliques": "sequence",
             "Linha Vermelha": "linered",
-            "Número Vermelho": "linered"
+            "Número Vermelho": "linered",
+            "Modo Inteligente": "adaptive"
         }
         return mapping.get(label, "fixed")
 
@@ -657,6 +738,9 @@ class AppGui(ctk.CTk):
         self.lbl_status_win_img = ctk.CTkLabel(img_check_container.content_frame, text="win.png: Verificando...", font=ctk.CTkFont(size=11))
         self.lbl_status_win_img.pack(anchor="w", padx=15, pady=2)
         
+        self.lbl_status_win2_img = ctk.CTkLabel(img_check_container.content_frame, text="win2.png: Verificando...", font=ctk.CTkFont(size=11))
+        self.lbl_status_win2_img.pack(anchor="w", padx=15, pady=2)
+        
         self.lbl_status_loss_img = ctk.CTkLabel(img_check_container.content_frame, text="loss.png: Verificando...", font=ctk.CTkFont(size=11))
         self.lbl_status_loss_img.pack(anchor="w", padx=15, pady=2)
         
@@ -664,32 +748,55 @@ class AppGui(ctk.CTk):
         self.lbl_status_number_img.pack(anchor="w", padx=15, pady=2)
         
         # Botoes de Acao Principais
-        self.btn_start = ctk.CTkButton(left_frame, text="INICIAR BOT", fg_color=ACCENT_GREEN, hover_color="#059669", font=ctk.CTkFont(size=16, weight="bold"), height=45, command=self.btn_start_clicked)
+        self.btn_start = ctk.CTkButton(
+            left_frame, 
+            text="🚀  INICIAR ROBÔ", 
+            fg_color=ACCENT_GREEN, 
+            hover_color="#059669", 
+            font=ctk.CTkFont(size=15, weight="bold"), 
+            height=46, 
+            corner_radius=10,
+            command=self.btn_start_clicked
+        )
         self.btn_start.pack(fill="x", padx=15, pady=(20, 10))
         
-        self.btn_stop = ctk.CTkButton(left_frame, text="PARAR BOT (F8)", fg_color=ACCENT_RED, hover_color="#dc2626", font=ctk.CTkFont(size=16, weight="bold"), height=45, command=self.btn_stop_clicked, state="disabled")
+        self.btn_stop = ctk.CTkButton(
+            left_frame, 
+            text="🛑  PARAR ROBÔ (F8)", 
+            fg_color=ACCENT_RED, 
+            hover_color="#e11d48", 
+            font=ctk.CTkFont(size=15, weight="bold"), 
+            height=46, 
+            corner_radius=10,
+            command=self.btn_stop_clicked, 
+            state="disabled"
+        )
         self.btn_stop.pack(fill="x", padx=15, pady=0)
         
         self.btn_overlay = ctk.CTkButton(
             left_frame, 
-            text="WIDGET OVERLAY (O)", 
-            fg_color="#475569", 
-            hover_color="#334155", 
-            font=ctk.CTkFont(size=14, weight="bold"), 
-            height=35, 
+            text="🎛️  MONITOR SOBREPOSTO (O)", 
+            fg_color=CARD_BG, 
+            hover_color="#1e293b", 
+            border_color="#334155",
+            border_width=1,
+            font=ctk.CTkFont(size=13, weight="bold"), 
+            height=38, 
+            corner_radius=10,
             command=self.toggle_overlay
         )
         self.btn_overlay.pack(fill="x", padx=15, pady=(15, 0))
         
         self.btn_settings = ctk.CTkButton(
             left_frame, 
-            text="⚙️ CONFIGURAÇÕES", 
-            fg_color="#1e293b", 
-            hover_color="#334155", 
+            text="⚙️  CONFIGURAÇÕES DE ACESSO", 
+            fg_color=CARD_BG, 
+            hover_color="#1e293b", 
             border_color="#334155",
             border_width=1,
-            font=ctk.CTkFont(size=14, weight="bold"), 
-            height=35, 
+            font=ctk.CTkFont(size=13, weight="bold"), 
+            height=38, 
+            corner_radius=10,
             command=self.open_settings_popup
         )
         self.btn_settings.pack(fill="x", padx=15, pady=(10, 0))
@@ -724,7 +831,7 @@ class AppGui(ctk.CTk):
         lbl_configs.pack(anchor="w", pady=(10, 15))
         
         # Seletor de Modo (Segmented Button para layout moderno)
-        self.seg_mode = ctk.CTkSegmentedButton(right_frame, values=["Intervalo Fixo", "Intervalo Aleatório", "Sequência de Cliques", "Número Vermelho"], command=self._mode_selection_changed)
+        self.seg_mode = ctk.CTkSegmentedButton(right_frame, values=["Intervalo Fixo", "Intervalo Aleatório", "Sequência de Cliques", "Número Vermelho", "Modo Inteligente"], command=self._mode_selection_changed)
         self.seg_mode.pack(fill="x", pady=(0, 15))
         
         # Container de Modos Dinamicos (Agora Recolhível)
@@ -820,6 +927,54 @@ class AppGui(ctk.CTk):
         
         self.lbl_region_coords = ctk.CTkLabel(row_region, text="Não definida", font=ctk.CTkFont(size=11), text_color="#94a3b8")
         self.lbl_region_coords.pack(side="left")
+
+        # --- SUBFRAME: MODO ADAPTATIVO (INTELIGENTE) ---
+        self.frame_adaptive = ctk.CTkFrame(self.mode_container.content_frame, fg_color="transparent")
+        lbl_adaptive = ctk.CTkLabel(self.frame_adaptive, text="Configurações do Modo Inteligente", font=ctk.CTkFont(weight="bold"))
+        lbl_adaptive.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        adaptive_info = (
+            "O bot entra em fase de observação inicial colhendo dados de comportamento\n"
+            "do Accumulator em tempo real, gerando estratégias dinâmicas com base na confiança."
+        )
+        ctk.CTkLabel(self.frame_adaptive, text=adaptive_info,
+                     font=ctk.CTkFont(size=11), text_color="#94a3b8",
+                     justify="left").pack(anchor="w", padx=15, pady=(0, 10))
+                     
+        row_adaptive_inputs = ctk.CTkFrame(self.frame_adaptive, fg_color="transparent")
+        row_adaptive_inputs.pack(fill="x", padx=15, pady=5)
+        
+        # Tempo observação
+        col_obs = ctk.CTkFrame(row_adaptive_inputs, fg_color="transparent")
+        col_obs.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_obs, text="Obs. Inicial (min)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_adaptive_obs = ctk.CTkEntry(col_obs, height=28, width=70)
+        self.entry_adaptive_obs.pack(fill="x", pady=2)
+        self.entry_adaptive_obs.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        # Reaprender a cada X eventos
+        col_events = ctk.CTkFrame(row_adaptive_inputs, fg_color="transparent")
+        col_events.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_events, text="Reaprender (Eventos)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_adaptive_events = ctk.CTkEntry(col_events, height=28, width=70)
+        self.entry_adaptive_events.pack(fill="x", pady=2)
+        self.entry_adaptive_events.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        # Reaprender a cada X minutos
+        col_rep_min = ctk.CTkFrame(row_adaptive_inputs, fg_color="transparent")
+        col_rep_min.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_rep_min, text="Reaprender (min)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_adaptive_rep_min = ctk.CTkEntry(col_rep_min, height=28, width=70)
+        self.entry_adaptive_rep_min.pack(fill="x", pady=2)
+        self.entry_adaptive_rep_min.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        # Reaprender apos X losses
+        col_losses = ctk.CTkFrame(row_adaptive_inputs, fg_color="transparent")
+        col_losses.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_losses, text="Reaprender (Losses)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_adaptive_losses = ctk.CTkEntry(col_losses, height=28, width=70)
+        self.entry_adaptive_losses.pack(fill="x", pady=2)
+        self.entry_adaptive_losses.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
 
         # --- NOVO: CONTAINER DE AGENDAMENTO (Agora Recolhível) ---
         self.schedule_frame = CollapsibleFrame(right_frame, title="Agendamento de Início", start_collapsed=True)
@@ -924,6 +1079,32 @@ class AppGui(ctk.CTk):
         self.entry_free_entries = ctk.CTkEntry(self.frame_finance_free, height=28)
         self.entry_free_entries.pack(fill="x", pady=2)
         self.entry_free_entries.bind("<KeyRelease>", self._gui_setting_changed)
+
+        # --- NOVO: CONTAINER DE ENTRADAS POR CICLO (Recolhível) ---
+        self.cycle_frame = CollapsibleFrame(right_frame, title="Entradas por Ciclo", start_collapsed=True)
+        self.cycle_frame.pack(fill="x", pady=(0, 15))
+        
+        row_cycle = ctk.CTkFrame(self.cycle_frame.content_frame, fg_color="transparent")
+        row_cycle.pack(fill="x", padx=15, pady=10)
+        
+        self.switch_cycle = ctk.CTkSwitch(row_cycle, text="Ativar Ciclos", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.switch_cycle.pack(side="left", padx=(0, 20))
+        
+        # Entradas por Ciclo
+        col_cycle_entries = ctk.CTkFrame(row_cycle, fg_color="transparent")
+        col_cycle_entries.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_cycle_entries, text="Entradas/Ciclo", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_cycle_max_entries = ctk.CTkEntry(col_cycle_entries, height=28)
+        self.entry_cycle_max_entries.pack(fill="x", pady=2)
+        self.entry_cycle_max_entries.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        # Pausa por Ciclo (minutos)
+        col_cycle_cooldown = ctk.CTkFrame(row_cycle, fg_color="transparent")
+        col_cycle_cooldown.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_cycle_cooldown, text="Pausa (minutos)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_cycle_cooldown = ctk.CTkEntry(col_cycle_cooldown, height=28)
+        self.entry_cycle_cooldown.pack(fill="x", pady=2)
+        self.entry_cycle_cooldown.bind("<KeyRelease>", self._gui_setting_changed)
 
         # --- LOG CONSOLE EM TEMPO REAL (Agora Recolhível) ---
         console_frame = CollapsibleFrame(right_frame, title="Logs de Operação em Tempo Real", start_collapsed=True)
@@ -1423,23 +1604,138 @@ class AppGui(ctk.CTk):
                 time.sleep(5)
 
     def _handle_telegram_command(self, cmd):
-        cmd = cmd.lower()
-        if cmd == "/status":
+        cmd = cmd.strip()
+        parts = cmd.split()
+        if not parts:
+            return
+        base_cmd = parts[0].lower()
+        
+        if base_cmd == "/status":
             self.after(0, self._send_telegram_status_reply)
-        elif cmd == "/parar":
+        elif base_cmd == "/parar":
             self.after(0, self._execute_telegram_stop)
-        elif cmd == "/config":
+        elif base_cmd == "/config":
             self.after(0, self._send_telegram_config_reply)
+        elif base_cmd == "/ciclo":
+            self.after(0, self._send_telegram_cycle_help)
+        elif base_cmd == "/ciclo_ativar":
+            self.after(0, lambda: self._set_cycle_enabled_telegram(True))
+        elif base_cmd == "/ciclo_desativar":
+            self.after(0, lambda: self._set_cycle_enabled_telegram(False))
+        elif base_cmd == "/ciclo_entradas":
+            if len(parts) > 1:
+                self.after(0, lambda: self._set_cycle_max_entries_telegram(parts[1]))
+            else:
+                self.after(0, lambda: self._send_telegram_reply("⚠️ <b>Uso incorreto.</b> Ex: <code>/ciclo_entradas 4</code>"))
+        elif base_cmd == "/ciclo_pausa":
+            if len(parts) > 1:
+                self.after(0, lambda: self._set_cycle_cooldown_telegram(parts[1]))
+            else:
+                self.after(0, lambda: self._send_telegram_reply("⚠️ <b>Uso incorreto.</b> Ex: <code>/ciclo_pausa 30</code>"))
+        elif base_cmd in ["/ciclo_pular", "/pular"]:
+            self.after(0, self._execute_telegram_skip_cooldown)
+
+    def _send_telegram_reply(self, text):
+        telegram_sender.send_telegram_msg(self.config, text, self.log_message)
+
+    def _update_setting_from_telegram(self, key, value):
+        self.config[key] = value
+        config_manager.save_config(self.config)
+        if self.bot and self.bot.running:
+            self.bot.config = self.config
+        self.after(0, self._apply_config_to_gui)
+
+    def _send_telegram_cycle_help(self):
+        cycle_enabled = self.config.get("cycle_enabled", False)
+        max_entries = self.config.get("cycle_max_entries", 4)
+        cooldown = self.config.get("cycle_cooldown_minutes", 60)
+        
+        status_str = "ATIVADO 🟢" if cycle_enabled else "DESATIVADO 🔴"
+        
+        msg = (
+            f"🔄 <b>Comandos de Ciclo</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Estado Atual:</b> {status_str}\n"
+            f"• <b>Entradas/Ciclo:</b> {max_entries}\n"
+            f"• <b>Tempo de Pausa:</b> {cooldown} min\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Comandos disponíveis:</b>\n"
+            f"👉 <code>/ciclo_ativar</code> - Ativa a função de ciclos\n"
+            f"👉 <code>/ciclo_desativar</code> - Desativa a função de ciclos\n"
+            f"👉 <code>/ciclo_entradas &lt;n&gt;</code> - Define limite de entradas\n"
+            f"👉 <code>/ciclo_pausa &lt;min&gt;</code> - Define minutos de pausa\n"
+            f"👉 <code>/pular</code> - Pula a pausa do ciclo atual"
+        )
+        self._send_telegram_reply(msg)
+
+    def _set_cycle_enabled_telegram(self, enabled):
+        self._update_setting_from_telegram("cycle_enabled", enabled)
+        status = "ATIVADO 🟢" if enabled else "DESATIVADO 🔴"
+        self._send_telegram_reply(f"🔄 <b>Ciclo {status} com sucesso!</b>")
+
+    def _set_cycle_max_entries_telegram(self, val_str):
+        try:
+            val = int(val_str)
+            if val <= 0:
+                raise ValueError()
+            self._update_setting_from_telegram("cycle_max_entries", val)
+            self._send_telegram_reply(f"🎯 <b>Entradas por ciclo definidas para:</b> {val}")
+        except ValueError:
+            self._send_telegram_reply("⚠️ <b>Valor inválido.</b> Insira um número inteiro maior que 0.")
+
+    def _set_cycle_cooldown_telegram(self, val_str):
+        try:
+            val = int(val_str)
+            if val <= 0:
+                raise ValueError()
+            self._update_setting_from_telegram("cycle_cooldown_minutes", val)
+            self._send_telegram_reply(f"⏱️ <b>Tempo de pausa por ciclo definido para:</b> {val} minutos")
+        except ValueError:
+            self._send_telegram_reply("⚠️ <b>Valor inválido.</b> Insira um número inteiro maior que 0.")
+
+    def _execute_telegram_skip_cooldown(self):
+        if self.bot and self.bot.running and getattr(self.bot, "in_cycle_cooldown", False):
+            self.bot.in_cycle_cooldown = False
+            self.bot.cycle_cooldown_end_time = 0.0
+            self.bot.cycle_entries_count = 0
+            self._send_telegram_reply("⚡ <b>Pausa do ciclo pulada! Retomando operações imediatamente...</b>")
+        else:
+            self._send_telegram_reply("⚠️ <b>O bot não está em pausa de ciclo no momento.</b>")
 
     def _send_telegram_status_reply(self):
         is_running = self.bot and self.bot.running
-        status_str = "EXECUTANDO 🟢" if is_running else "PARADO 🔴"
+        if is_running:
+            exec_mode = getattr(self, "execution_mode", "desconhecido")
+            if exec_mode == "stealth":
+                status_str = "STEALTH 🥷 🟢"
+            else:
+                status_str = "EXECUTANDO 🟢"
+        else:
+            status_str = "PARADO 🔴"
         
         wins = self.lbl_metric_wins.cget("text")
         losses = self.lbl_metric_losses.cget("text")
         clicks = self.lbl_metric_clicks.cget("text")
         assertiveness = self.lbl_metric_assert.cget("text")
         
+        # Check cycle status
+        cycle_enabled = self.config.get("cycle_enabled", False)
+        if cycle_enabled and is_running:
+            in_cooldown = getattr(self.bot, "in_cycle_cooldown", False)
+            if in_cooldown:
+                cooldown_end = getattr(self.bot, "cycle_cooldown_end_time", 0.0)
+                end_str = datetime.datetime.fromtimestamp(cooldown_end).strftime("%H:%M:%S")
+                cycle_str = f"PAUSADO ⏳ (Retorno às {end_str})"
+                status_str = "PAUSADO (CICLO) ⏳"
+            else:
+                entries = getattr(self.bot, "cycle_entries_count", 0)
+                max_entries = self.config.get("cycle_max_entries", 4)
+                cycle_str = f"ATIVO 🔄 ({entries}/{max_entries} entr.)"
+        elif cycle_enabled:
+            cycle_str = "ATIVO 🔄 (Bot Parado)"
+        else:
+            cycle_str = "DESATIVADO ⚪"
+            
         profit = 0.0
         if self.bot:
             profit = getattr(self.bot, "current_profit", 0.0)
@@ -1451,15 +1747,36 @@ class AppGui(ctk.CTk):
             minutes, seconds = divmod(remainder, 60)
             elapsed_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             
+        adaptive_str = ""
+        if is_running and self.config.get("mode") == "adaptive":
+            phase = getattr(self.bot, "adaptive_phase", "observation")
+            phase_lbl = "Observando 👁️" if phase == "observation" else "Operando 🤖"
+            strat = getattr(self.bot, "adaptive_strategy", {})
+            events = strat.get("eventos_analisados", 0)
+            conf_val = strat.get("confidence", 0.0)
+            pattern = strat.get("dominant_pattern", "N/A")
+            rule = strat.get("text", "N/A")
+            adaptive_str = (
+                f"\n━━━━━━━━━━━━━━━━━━\n"
+                f"🧠 <b>Modo Inteligente (IA):</b>\n"
+                f"├─ <b>Fase:</b> {phase_lbl}\n"
+                f"├─ <b>Eventos:</b> {events}\n"
+                f"├─ <b>Confiança:</b> {conf_val:.1f}%\n"
+                f"├─ <b>Padrão Dominante:</b> {pattern}\n"
+                f"└─ <b>Regra Ativa:</b> {rule}"
+            )
+            
         msg = (
             f"📊 <b>Status do DerivClickerBot</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Status:</b> {status_str}\n"
+            f"• <b>Ciclos:</b> {cycle_str}\n"
             f"• <b>Saldo Atual:</b> ${profit:.2f}\n"
             f"• <b>Wins:</b> {wins} | <b>Losses:</b> {losses}\n"
             f"• <b>Assertividade:</b> {assertiveness}\n"
             f"• <b>Cliques:</b> {clicks}\n"
             f"• <b>Tempo Ativo:</b> {elapsed_str}"
+            f"{adaptive_str}"
         )
         telegram_sender.send_telegram_msg(self.config, msg, self.log_message)
 
@@ -1478,13 +1795,35 @@ class AppGui(ctk.CTk):
         win_val = self.config.get("win_value", 1.50)
         loss_val = self.config.get("loss_value", 30.00)
         
+        cycle_enabled = self.config.get("cycle_enabled", False)
+        cycle_status = "Ativo" if cycle_enabled else "Desativado"
+        cycle_max = self.config.get("cycle_max_entries", 4)
+        cycle_cool = self.config.get("cycle_cooldown_minutes", 60)
+        
+        adaptive_str = ""
+        if mode == "Modo Inteligente":
+            obs_min = self.config.get("adaptive_observation_minutes", 30)
+            rel_ev = self.config.get("adaptive_relearn_events", 100)
+            rel_min = self.config.get("adaptive_relearn_minutes", 30)
+            rel_los = self.config.get("adaptive_relearn_losses", 3)
+            adaptive_str = (
+                f"\n━━━━━━━━━━━━━━━━━━\n"
+                f"🧠 <b>Parâmetros Inteligentes:</b>\n"
+                f"├─ Obs. Inicial: {obs_min}m\n"
+                f"├─ Reaprender (Ev): {rel_ev}\n"
+                f"├─ Reaprender (min): {rel_min}m\n"
+                f"└─ Reaprender (Losses): {rel_los}"
+            )
+            
         msg = (
             f"⚙️ <b>Configurações do DerivClickerBot</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Modo Ativo:</b> {mode}\n"
             f"• <b>Meta de Lucro (Stop Win):</b> ${target:.2f}\n"
             f"• <b>Valor por Win:</b> ${win_val:.2f}\n"
-            f"• <b>Limite por Loss:</b> ${loss_val:.2f}"
+            f"• <b>Limite por Loss:</b> ${loss_val:.2f}\n"
+            f"• <b>Ciclos:</b> {cycle_status} (Entradas: {cycle_max} | Pausa: {cycle_cool}m)"
+            f"{adaptive_str}"
         )
         telegram_sender.send_telegram_msg(self.config, msg, self.log_message)
 
@@ -1499,6 +1838,7 @@ class AppGui(ctk.CTk):
         self.frame_random.pack_forget()
         self.frame_sequence.pack_forget()
         self.frame_linered.pack_forget()
+        self.frame_adaptive.pack_forget()
         
         if mode_label == "Intervalo Fixo":
             self.frame_fixed.pack(fill="x", pady=5)
@@ -1508,6 +1848,8 @@ class AppGui(ctk.CTk):
             self.frame_sequence.pack(fill="x", pady=5)
         elif mode_label == "Linha Vermelha" or mode_label == "Número Vermelho":
             self.frame_linered.pack(fill="x", pady=5)
+        elif mode_label == "Modo Inteligente":
+            self.frame_adaptive.pack(fill="x", pady=5)
 
     def _slider_fixed_changed(self, val):
         self.lbl_fixed_val.configure(text=f"{val:.1f}s")
@@ -1548,6 +1890,16 @@ class AppGui(ctk.CTk):
             seq_clicks = int(self.entry_seq_clicks.get())
         except ValueError:
             seq_clicks = 3
+
+        try:
+            cycle_max_entries_val = int(self.entry_cycle_max_entries.get())
+        except ValueError:
+            cycle_max_entries_val = 4
+            
+        try:
+            cycle_cooldown_val = int(self.entry_cycle_cooldown.get())
+        except ValueError:
+            cycle_cooldown_val = 60
             
         try:
             seq_interval = float(self.entry_seq_interval.get())
@@ -1606,6 +1958,27 @@ class AppGui(ctk.CTk):
         self.config["seq_wait"] = round(seq_wait, 1)
         self.config["use_search_region"] = self.check_use_region.get() == 1
         
+        # Modo Adaptativo
+        try:
+            self.config["adaptive_observation_minutes"] = int(self.entry_adaptive_obs.get())
+        except ValueError:
+            pass
+            
+        try:
+            self.config["adaptive_relearn_events"] = int(self.entry_adaptive_events.get())
+        except ValueError:
+            pass
+            
+        try:
+            self.config["adaptive_relearn_minutes"] = int(self.entry_adaptive_rep_min.get())
+        except ValueError:
+            pass
+            
+        try:
+            self.config["adaptive_relearn_losses"] = int(self.entry_adaptive_losses.get())
+        except ValueError:
+            pass
+        
         # Leitura da janela de configurações se estiver aberta
         if hasattr(self, "settings_slider_sens") and self.settings_slider_sens and self.settings_slider_sens.winfo_exists():
             self.config["sensitivity"] = round(self.settings_slider_sens.get(), 2)
@@ -1638,6 +2011,27 @@ class AppGui(ctk.CTk):
         self.config["schedule_date"] = self.entry_sched_date.get().strip()
         self.config["schedule_time"] = self.entry_sched_time.get().strip()
         
+        # Ciclos de Entradas
+        self.config["cycle_enabled"] = self.switch_cycle.get() == 1
+        self.config["cycle_max_entries"] = cycle_max_entries_val
+        self.config["cycle_cooldown_minutes"] = cycle_cooldown_val
+        
+        # Deriv API Configuration
+        if hasattr(self, "settings_entry_api_token") and self.settings_entry_api_token and self.settings_entry_api_token.winfo_exists():
+            self.config["deriv_api_token"] = self.settings_entry_api_token.get().strip()
+        if hasattr(self, "settings_entry_api_appid") and self.settings_entry_api_appid and self.settings_entry_api_appid.winfo_exists():
+            self.config["deriv_app_id"] = self.settings_entry_api_appid.get().strip()
+        if hasattr(self, "settings_combo_api_symbol") and self.settings_combo_api_symbol and self.settings_combo_api_symbol.winfo_exists():
+            self.config["deriv_symbol"] = self.settings_combo_api_symbol.get()
+        if hasattr(self, "settings_entry_api_growth") and self.settings_entry_api_growth and self.settings_entry_api_growth.winfo_exists():
+            try:
+                growth_percent = float(self.settings_entry_api_growth.get().replace(",", "."))
+                self.config["deriv_growth_rate"] = round(growth_percent / 100.0, 4)
+            except ValueError:
+                pass
+        if hasattr(self, "settings_switch_use_api") and self.settings_switch_use_api and self.settings_switch_use_api.winfo_exists():
+            self.config["deriv_use_api_trading"] = self.settings_switch_use_api.get() == 1
+            
         # Salva no arquivo JSON
         config_manager.save_config(self.config)
         
@@ -1774,6 +2168,62 @@ class AppGui(ctk.CTk):
         self.lbl_tg_status = ctk.CTkLabel(sec3_frame, text="", font=ctk.CTkFont(size=11), text_color="#94a3b8")
         self.lbl_tg_status.pack(anchor="w", padx=15, pady=(0, 10))
 
+        # SECTION 5: CONEXÃO API DERIV
+        sec5_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
+        sec5_frame.pack(fill="x", padx=10, pady=10)
+        
+        lbl_sec5_title = ctk.CTkLabel(sec5_frame, text="🔌 Conexão API da Deriv", font=ctk.CTkFont(size=13, weight="bold"), text_color="#38bdf8")
+        lbl_sec5_title.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        self.settings_switch_use_api = ctk.CTkSwitch(sec5_frame, text="Ativar Operações por API (Sem Cliques)", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_use_api.pack(anchor="w", padx=15, pady=4)
+        
+        row_api_inputs = ctk.CTkFrame(sec5_frame, fg_color="transparent")
+        row_api_inputs.pack(fill="x", padx=15, pady=6)
+        
+        col_api_token = ctk.CTkFrame(row_api_inputs, fg_color="transparent")
+        col_api_token.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ctk.CTkLabel(col_api_token, text="Token de Acesso API", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_entry_api_token = ctk.CTkEntry(col_api_token, height=28, placeholder_text="Token API")
+        self.settings_entry_api_token.pack(fill="x", pady=2)
+        self.settings_entry_api_token.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        col_api_appid = ctk.CTkFrame(row_api_inputs, fg_color="transparent")
+        col_api_appid.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        ctk.CTkLabel(col_api_appid, text="App ID", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_entry_api_appid = ctk.CTkEntry(col_api_appid, height=28, placeholder_text="1098")
+        self.settings_entry_api_appid.pack(fill="x", pady=2)
+        self.settings_entry_api_appid.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        row_api_inputs2 = ctk.CTkFrame(sec5_frame, fg_color="transparent")
+        row_api_inputs2.pack(fill="x", padx=15, pady=6)
+        
+        col_api_symbol = ctk.CTkFrame(row_api_inputs2, fg_color="transparent")
+        col_api_symbol.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ctk.CTkLabel(col_api_symbol, text="Ativo (Symbol)", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_combo_api_symbol = ctk.CTkComboBox(col_api_symbol, values=["R_10", "R_25", "R_50", "R_75", "R_100", "1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V"], height=28, command=lambda e: self._gui_setting_changed())
+        self.settings_combo_api_symbol.pack(fill="x", pady=2)
+        
+        col_api_growth = ctk.CTkFrame(row_api_inputs2, fg_color="transparent")
+        col_api_growth.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        ctk.CTkLabel(col_api_growth, text="Taxa de Crescimento (%)", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_entry_api_growth = ctk.CTkEntry(col_api_growth, height=28, placeholder_text="1.0")
+        self.settings_entry_api_growth.pack(fill="x", pady=2)
+        self.settings_entry_api_growth.bind("<KeyRelease>", self._gui_setting_changed)
+        
+        row_api_actions = ctk.CTkFrame(sec5_frame, fg_color="transparent")
+        row_api_actions.pack(fill="x", padx=15, pady=(4, 12))
+        
+        self.btn_api_test = ctk.CTkButton(
+            row_api_actions, text="🔌 Testar Conexão API", width=150, height=28,
+            font=ctk.CTkFont(size=11), fg_color=ACCENT_BLUE, hover_color="#2563eb",
+            command=self._test_api_connection
+        )
+        self.btn_api_test.pack(side="left", padx=(0, 8))
+        
+        self.lbl_api_status = ctk.CTkLabel(sec5_frame, text="", font=ctk.CTkFont(size=11), text_color="#94a3b8")
+        self.lbl_api_status.pack(anchor="w", padx=15, pady=(0, 10))
+
         # SECTION 4: SISTEMA E LOGS
         sec4_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
         sec4_frame.pack(fill="x", padx=10, pady=10)
@@ -1887,8 +2337,17 @@ class AppGui(ctk.CTk):
             
         self._gui_setting_changed()  # Salva tudo antes de iniciar
         self.stop_reason = None
+        self.execution_mode = mode
+        self.original_use_api_trading = self.config.get("deriv_use_api_trading", False)
         
-        if mode == "derivclicker":
+        if mode == "stealth":
+            token = self.config.get("deriv_api_token", "").strip()
+            if not token:
+                messagebox.showerror("Erro de Configuração", "O Modo Stealth requer um Token de Acesso API da Deriv.\nPor favor, configure o Token nas Configurações Avançadas antes de iniciar.")
+                return
+            self.config["deriv_use_api_trading"] = True
+            self.log_message("Modo STEALTH iniciado: Operações rodando em segundo plano via API da Deriv.")
+        elif mode == "derivclicker":
             try:
                 if getattr(sys, 'frozen', False):
                     cmd = [sys.executable, "--webview"]
@@ -1905,7 +2364,10 @@ class AppGui(ctk.CTk):
         if is_scheduled:
             self.lbl_status_value.configure(text="AGENDADO", text_color=ACCENT_YELLOW)
         else:
-            self.lbl_status_value.configure(text="EXECUTANDO", text_color=ACCENT_GREEN)
+            if mode == "stealth":
+                self.lbl_status_value.configure(text="STEALTH 🥷", text_color="#a855f7")
+            else:
+                self.lbl_status_value.configure(text="EXECUTANDO", text_color=ACCENT_GREEN)
             
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
@@ -1969,6 +2431,9 @@ class AppGui(ctk.CTk):
             except Exception:
                 pass
                 
+        if getattr(self, "execution_mode", None) == "stealth" and hasattr(self, "original_use_api_trading"):
+            self.config["deriv_use_api_trading"] = self.original_use_api_trading
+
         self.lbl_status_value.configure(text="PARADO", text_color=ACCENT_RED)
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
@@ -2004,6 +2469,9 @@ class AppGui(ctk.CTk):
             except Exception:
                 pass
                 
+        if getattr(self, "execution_mode", None) == "stealth" and hasattr(self, "original_use_api_trading"):
+            self.config["deriv_use_api_trading"] = self.original_use_api_trading
+
         self._update_overlay_data()
 
     def _on_stop_limit(self, limit_type, count):
@@ -2199,6 +2667,50 @@ class AppGui(ctk.CTk):
                 _after_test(f"❌ {exc}", False)
         threading.Thread(target=_do_test, daemon=True).start()
 
+    def _test_api_connection(self):
+        token = self.settings_entry_api_token.get().strip()
+        app_id = self.settings_entry_api_appid.get().strip() or "1098"
+        symbol = self.settings_combo_api_symbol.get()
+        
+        if not token:
+            self.lbl_api_status.configure(text="❌ Erro: Insira o Token de Acesso API.", text_color="#ef4444")
+            return
+            
+        self.lbl_api_status.configure(text="⏳ Conectando e autenticando...", text_color="#38bdf8")
+        self.btn_api_test.configure(state="disabled")
+        
+        def run_test():
+            from deriv_api_client import DerivApiClient
+            client = DerivApiClient(token=token, app_id=app_id, symbol=symbol)
+            
+            auth_success = [False]
+            error_msg = ["Tempo esgotado."]
+            event = threading.Event()
+            
+            def on_log(msg):
+                if "Erro de autenticação" in msg or "Erro" in msg:
+                    error_msg[0] = msg
+                elif "Autenticado com sucesso" in msg:
+                    auth_success[0] = True
+                    event.set()
+                elif "Conexão fechada" in msg or "Erro na conexão WS" in msg:
+                    event.set()
+                    
+            client.on_log_cb = on_log
+            client.connect()
+            
+            event.wait(10.0)
+            client.disconnect()
+            
+            if auth_success[0]:
+                self.after(0, lambda: self.lbl_api_status.configure(text=f"✅ Conexão bem-sucedida! Saldo: ${client.balance:.2f}", text_color=ACCENT_GREEN))
+            else:
+                self.after(0, lambda: self.lbl_api_status.configure(text=f"❌ Falha: {error_msg[0]}", text_color="#ef4444"))
+                
+            self.after(0, lambda: self.btn_api_test.configure(state="normal"))
+            
+        threading.Thread(target=run_test, daemon=True).start()
+
     # --- CALLBACKS DO TRABALHADOR ---
     def update_clicks_metric(self, click_count):
         self.after(0, lambda: self._update_clicks_on_ui(click_count))
@@ -2289,6 +2801,8 @@ class AppGui(ctk.CTk):
     def update_gui_loop(self):
         # 1. Atualiza tempo de execucao
         if self.bot and self.bot.running:
+            in_cooldown = getattr(self.bot, "in_cycle_cooldown", False)
+            
             if self.lbl_status_value.cget("text") == "AGENDADO":
                 rem = getattr(self, "remaining_schedule_time", 0)
                 if rem > 0:
@@ -2302,21 +2816,56 @@ class AppGui(ctk.CTk):
                 else:
                     self.lbl_next_click.configure(text="Iniciando...", text_color=ACCENT_GREEN)
                 self.lbl_timer.configure(text="00:00:00")
-            else:
+            elif in_cooldown:
+                if self.lbl_status_value.cget("text") != "PAUSADO (CICLO)":
+                    self.lbl_status_value.configure(text="PAUSADO (CICLO)", text_color=ACCENT_YELLOW)
+                    
                 elapsed = time.time() - self.start_time
                 hours, remainder = divmod(int(elapsed), 3600)
                 minutes, seconds = divmod(remainder, 60)
                 self.lbl_timer.configure(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
                 
-                # 2. Atualiza contagem regressiva proximo clique
-                if self.next_click_deadline > 0:
-                    remaining = self.next_click_deadline - time.time()
-                    if remaining > 0:
-                        self.lbl_next_click.configure(text=f"{remaining:.1f}s", text_color=ACCENT_YELLOW)
-                    else:
-                        self.lbl_next_click.configure(text="Processando...", text_color=ACCENT_GREEN)
+                rem = getattr(self, "remaining_schedule_time", 0)
+                if rem > 0:
+                    hours, remainder = divmod(int(rem), 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    timer_str = f"Ciclo em {hours:02d}h {minutes:02d}m {seconds:02d}s" if hours > 0 else f"Ciclo em {minutes:02d}m {seconds:02d}s"
+                    self.lbl_next_click.configure(text=timer_str, text_color=ACCENT_YELLOW)
                 else:
-                    self.lbl_next_click.configure(text="Escaneando...", text_color=ACCENT_BLUE)
+                    self.lbl_next_click.configure(text="Retomando...", text_color=ACCENT_GREEN)
+            else:
+                mode = self.config.get("mode", "fixed")
+                if mode == "adaptive":
+                    phase = getattr(self.bot, "adaptive_phase", "observation")
+                    if phase == "observation":
+                        self.lbl_status_value.configure(text="OBSERVANDO", text_color=ACCENT_YELLOW)
+                        rem = getattr(self, "remaining_schedule_time", 0.0)
+                        minutes, seconds = divmod(int(rem), 60)
+                        self.lbl_next_click.configure(text=f"Obs: {minutes:02d}m {seconds:02d}s", text_color=ACCENT_YELLOW)
+                    else:
+                        self.lbl_status_value.configure(text="EXECUTANDO (IA)", text_color=ACCENT_GREEN)
+                        strat = getattr(self.bot, "adaptive_strategy", {})
+                        conf_val = strat.get("confidence", 0.0)
+                        text_strat = strat.get("text", "Operando")
+                        self.lbl_next_click.configure(text=f"{text_strat} ({conf_val:.1f}%)", text_color=ACCENT_GREEN)
+                else:
+                    if self.lbl_status_value.cget("text") not in ["EXECUTANDO", "AGENDADO"]:
+                        self.lbl_status_value.configure(text="EXECUTANDO", text_color=ACCENT_GREEN)
+                
+                elapsed = time.time() - self.start_time
+                hours, remainder = divmod(int(elapsed), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                self.lbl_timer.configure(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+                
+                if mode != "adaptive":
+                    if self.next_click_deadline > 0:
+                        remaining = self.next_click_deadline - time.time()
+                        if remaining > 0:
+                            self.lbl_next_click.configure(text=f"{remaining:.1f}s", text_color=ACCENT_YELLOW)
+                        else:
+                            self.lbl_next_click.configure(text="Processando...", text_color=ACCENT_GREEN)
+                    else:
+                        self.lbl_next_click.configure(text="Escaneando...", text_color=ACCENT_BLUE)
         else:
             self.lbl_next_click.configure(text="Inativo", text_color="gray")
             
@@ -2453,6 +3002,31 @@ class AppGui(ctk.CTk):
         win_streak = getattr(self, "max_win_streak", 0)
         loss_streak = getattr(self, "max_loss_streak", 0)
         
+        mode = self.config.get("mode", "fixed")
+        adaptive_phase = getattr(self.bot, "adaptive_phase", "observation") if self.bot else "observation"
+        adaptive_rule = "N/A"
+        adaptive_conf = 0.0
+        if self.bot and hasattr(self.bot, "adaptive_strategy"):
+            strat = getattr(self.bot, "adaptive_strategy", {})
+            adaptive_rule = strat.get("text", "N/A")
+            adaptive_conf = strat.get("confidence", 0.0)
+
+        deriv_api_status = "Desconectado"
+        if self.config.get("deriv_use_api_trading", False):
+            if self.bot and getattr(self.bot, "api_client", None):
+                client = self.bot.api_client
+                if client.connected:
+                    if client.authorized:
+                        deriv_api_status = f"Autorizado ✅ (${client.balance:.2f})"
+                    else:
+                        deriv_api_status = "Autenticando..."
+                else:
+                    deriv_api_status = "Conectando..."
+            else:
+                deriv_api_status = "Desconectado"
+        else:
+            deriv_api_status = "Inativa (OCR)"
+
         self.overlay.update_data(
             status=status,
             clicks=clicks,
@@ -2466,7 +3040,12 @@ class AppGui(ctk.CTk):
             finance_mode=fin_mode,
             free_entries=free_entries,
             timer_str=timer_str,
-            next_click_str=next_click_str
+            next_click_str=next_click_str,
+            mode=mode,
+            adaptive_phase=adaptive_phase,
+            adaptive_rule=adaptive_rule,
+            adaptive_conf=adaptive_conf,
+            deriv_api_status=deriv_api_status
         )
 
     def _show_main_window(self):

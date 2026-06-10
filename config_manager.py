@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
     "save_log": True,
     "image_button_path": "capturas/botao.png",
     "image_win_path": "capturas/win.png",
+    "image_win2_path": "capturas/win2.png",
     "image_loss_path": "capturas/loss.png",
     "enable_stop_win": False,
     "stop_win": 5,
@@ -39,7 +40,19 @@ DEFAULT_CONFIG = {
     "loss_value": 30.00,
     "target_profit": 10.00,
     "finance_mode": "target",
-    "free_entries": 10
+    "free_entries": 10,
+    "cycle_enabled": False,
+    "cycle_max_entries": 4,
+    "cycle_cooldown_minutes": 60,
+    "adaptive_observation_minutes": 30,
+    "adaptive_relearn_events": 100,
+    "adaptive_relearn_minutes": 30,
+    "adaptive_relearn_losses": 3,
+    "deriv_api_token": "",
+    "deriv_app_id": "1098",
+    "deriv_symbol": "R_100",
+    "deriv_growth_rate": 0.01,
+    "deriv_use_api_trading": False
 }
 
 def load_config():

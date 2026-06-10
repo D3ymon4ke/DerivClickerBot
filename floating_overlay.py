@@ -6,12 +6,12 @@ import math
 from PIL import Image
 
 # Tema de Cores do Bot
-BG_MAIN = "#000000"
-CARD_BG = "#1e293b"
+BG_MAIN = "#05070c"
+CARD_BG = "#0f172a"
 ACCENT_GREEN = "#10b981"
-ACCENT_RED = "#ef4444"
-ACCENT_BLUE = "#3b82f6"
-ACCENT_YELLOW = "#f59e0b"
+ACCENT_RED = "#f43f5e"
+ACCENT_BLUE = "#38bdf8"
+ACCENT_YELLOW = "#fbbf24"
 
 class OverlayParticle:
     def __init__(self, x, y, dx, dy, color, size, life, decay, gravity=0.0):
@@ -39,7 +39,7 @@ class FloatingOverlay(ctk.CTkToplevel):
         
         # Dimensoes e Posicionamento Inicial (Canto Superior Direito por padrao)
         self.width = 260
-        self.height = 490
+        self.height = 535
         
         screen_w = self.winfo_screenwidth()
         start_x = screen_w - self.width - 50
@@ -178,6 +178,47 @@ class FloatingOverlay(ctk.CTkToplevel):
         self.lbl_next_click = ctk.CTkLabel(row_next, text="Inativo", font=ctk.CTkFont(size=11, weight="bold"), text_color=ACCENT_YELLOW)
         self.lbl_next_click.pack(side="right")
         
+        row_api = ctk.CTkFrame(body, fg_color="transparent")
+        row_api.pack(fill="x", pady=(2, 0))
+        
+        ctk.CTkLabel(row_api, text="Conexão API:", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(side="left")
+        self.lbl_api_conn_status = ctk.CTkLabel(row_api, text="Inativa (OCR)", font=ctk.CTkFont(size=11, weight="bold"), text_color="#64748b")
+        self.lbl_api_conn_status.pack(side="right")
+        
+        # --- SEÇÃO ADAPTATIVA NO RODAPÉ ---
+        self.frame_adaptive_overlay = ctk.CTkFrame(body, fg_color="transparent")
+        self.frame_adaptive_overlay.pack(fill="x", pady=(5, 0))
+        
+        # Divididor Adaptativo
+        self.div_adaptive = ctk.CTkFrame(self.frame_adaptive_overlay, fg_color="#334155", height=1)
+        self.div_adaptive.pack(fill="x", pady=(0, 4))
+        
+        row_phase = ctk.CTkFrame(self.frame_adaptive_overlay, fg_color="transparent")
+        row_phase.pack(fill="x")
+        ctk.CTkLabel(row_phase, text="Fase IA:", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(side="left")
+        self.lbl_adaptive_phase = ctk.CTkLabel(row_phase, text="Observação", font=ctk.CTkFont(size=11, weight="bold"), text_color=ACCENT_YELLOW)
+        self.lbl_adaptive_phase.pack(side="right")
+        
+        row_pattern = ctk.CTkFrame(self.frame_adaptive_overlay, fg_color="transparent")
+        row_pattern.pack(fill="x", pady=(2, 4))
+        ctk.CTkLabel(row_pattern, text="Regra IA:", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(side="left")
+        self.lbl_adaptive_rule = ctk.CTkLabel(row_pattern, text="3 ciclos -> repetição", font=ctk.CTkFont(size=10, weight="bold"), text_color="#e2e8f0")
+        self.lbl_adaptive_rule.pack(side="right")
+        
+        # Barra de Confiança
+        row_conf = ctk.CTkFrame(self.frame_adaptive_overlay, fg_color="transparent")
+        row_conf.pack(fill="x")
+        ctk.CTkLabel(row_conf, text="Confiança:", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(side="left")
+        self.lbl_adaptive_conf = ctk.CTkLabel(row_conf, text="0.0%", font=ctk.CTkFont(size=11, weight="bold"), text_color=ACCENT_BLUE)
+        self.lbl_adaptive_conf.pack(side="right")
+        
+        self.conf_canvas = tk.Canvas(self.frame_adaptive_overlay, height=14, bg=BG_MAIN, highlightthickness=0)
+        self.conf_canvas.pack(fill="x", pady=(2, 0))
+        self.conf_canvas.bind("<Button-1>", self.start_drag)
+        self.conf_canvas.bind("<B1-Motion>", self.drag)
+        
+        self.adaptive_conf_val = 0.0
+        
     def _create_metric_lbl(self, parent, label, initial_val, row, col, val_color="#e2e8f0"):
         container = ctk.CTkFrame(parent, fg_color="transparent")
         container.grid(row=row, column=col, sticky="w", pady=2)
@@ -198,11 +239,20 @@ class FloatingOverlay(ctk.CTkToplevel):
         new_y = self.winfo_y() + deltay
         self.geometry(f"+{new_x}+{new_y}")
         
-    def update_data(self, status, clicks, wins, losses, rate, win_streak, loss_streak, current_profit, target_profit, finance_mode, free_entries, timer_str, next_click_str):
+    def update_data(self, status, clicks, wins, losses, rate, win_streak, loss_streak, current_profit, target_profit, finance_mode, free_entries, timer_str, next_click_str, mode="fixed", adaptive_phase="observation", adaptive_rule="N/A", adaptive_conf=0.0, deriv_api_status="Inativa (OCR)"):
         # 1. Status and Color Mapping
         new_status = status.upper()
         
-        if new_status == "EXECUTANDO":
+        if "OBSERVANDO" in new_status:
+            self.status_text = "OBSERVANDO"
+            self.status_rgb = (245, 158, 11)
+        elif "STEALTH" in new_status:
+            self.status_text = "STEALTH 🥷"
+            self.status_rgb = (168, 85, 247)
+        elif "EXECUTANDO (IA)" in new_status:
+            self.status_text = "IA OPERANDO"
+            self.status_rgb = (16, 185, 129)
+        elif new_status == "EXECUTANDO":
             self.status_text = "EXECUTANDO"
             self.status_rgb = (16, 185, 129)
         elif new_status == "AGENDADO":
@@ -217,6 +267,9 @@ class FloatingOverlay(ctk.CTkToplevel):
         elif new_status in ["LIMIT ENTRADAS", "LIMITE ENTRADAS"]:
             self.status_text = "LIMIT ENTRADAS"
             self.status_rgb = (59, 130, 246)
+        elif "PAUSADO" in new_status or "CICLO" in new_status:
+            self.status_text = "PAUSA CICLO"
+            self.status_rgb = (245, 158, 11)
         else:
             self.status_text = "PARADO"
             self.status_rgb = (239, 68, 68)
@@ -287,6 +340,49 @@ class FloatingOverlay(ctk.CTkToplevel):
         # 4. Timer e Proximo Clique
         self.lbl_timer.configure(text=timer_str)
         self.lbl_next_click.configure(text=next_click_str)
+        
+        # 4b. API Status Update
+        self.lbl_api_conn_status.configure(text=deriv_api_status)
+        if "Autorizado" in deriv_api_status or "✅" in deriv_api_status:
+            self.lbl_api_conn_status.configure(text_color=ACCENT_GREEN)
+        elif "Inativa" in deriv_api_status or "OCR" in deriv_api_status:
+            self.lbl_api_conn_status.configure(text_color="#64748b")
+        elif "Desconectado" in deriv_api_status:
+            self.lbl_api_conn_status.configure(text_color=ACCENT_RED)
+        else:
+            self.lbl_api_conn_status.configure(text_color=ACCENT_YELLOW)
+            
+        # 5. Modo Adaptativo
+        if mode == "adaptive":
+            self.frame_adaptive_overlay.pack(fill="x", pady=(5, 0))
+            phase_lbl = "Observando 👁️" if adaptive_phase == "observation" else "Operando 🤖"
+            phase_color = ACCENT_YELLOW if adaptive_phase == "observation" else ACCENT_GREEN
+            self.lbl_adaptive_phase.configure(text=phase_lbl, text_color=phase_color)
+            self.lbl_adaptive_rule.configure(text=adaptive_rule)
+            self.lbl_adaptive_conf.configure(text=f"{adaptive_conf:.1f}%")
+            self.adaptive_conf_val = adaptive_conf / 100.0
+            
+            # Ajusta altura da janela se necessário
+            if self.height != 640:
+                self.height = 640
+                curr_x = self.winfo_x()
+                curr_y = self.winfo_y()
+                if curr_x <= 1 and curr_y <= 1:
+                    screen_w = self.winfo_screenwidth()
+                    curr_x = screen_w - self.width - 50
+                    curr_y = 50
+                self.geometry(f"{self.width}x{self.height}+{curr_x}+{curr_y}")
+        else:
+            self.frame_adaptive_overlay.pack_forget()
+            if self.height != 535:
+                self.height = 535
+                curr_x = self.winfo_x()
+                curr_y = self.winfo_y()
+                if curr_x <= 1 and curr_y <= 1:
+                    screen_w = self.winfo_screenwidth()
+                    curr_x = screen_w - self.width - 50
+                    curr_y = 50
+                self.geometry(f"{self.width}x{self.height}+{curr_x}+{curr_y}")
 
     # --- CANVAS & ANIMATION SYSTEM ---
     def update_loop(self):
@@ -295,6 +391,8 @@ class FloatingOverlay(ctk.CTkToplevel):
                 self._update_physics()
                 self._draw_status_canvas()
                 self._draw_progress_canvas()
+                if self.frame_adaptive_overlay.winfo_ismapped():
+                    self._draw_conf_canvas()
                 self.after(25, self.update_loop) # ~40 FPS
         except Exception as e:
             print(f"[Overlay] Erro no loop de animação: {e}")
@@ -330,7 +428,7 @@ class FloatingOverlay(ctk.CTkToplevel):
         if canvas_w < 10:
             canvas_w = 236
             
-        if self.status_text in ["EXECUTANDO", "AGENDADO"]:
+        if self.status_text in ["EXECUTANDO", "AGENDADO", "PAUSA CICLO", "STEALTH 🥷"]:
             # Spawn fireflies
             if random.random() < 0.25:
                 px = random.uniform(10, canvas_w - 10)
@@ -468,6 +566,34 @@ class FloatingOverlay(ctk.CTkToplevel):
             color = self.get_fade_color(p.color, p.life)
             r = p.size
             canvas.create_oval(p.x - r, p.y - r, p.x + r, p.y + r, fill=color, outline="")
+
+    def _draw_conf_canvas(self):
+        canvas = self.conf_canvas
+        canvas.delete("all")
+        
+        w = canvas.winfo_width()
+        h = canvas.winfo_height()
+        if w < 10:
+            w = 236
+        if h < 10:
+            h = 14
+            
+        bar_w = w - 10
+        start_x = 5
+        end_x = 5 + bar_w
+        active_x = 5 + int(bar_w * self.adaptive_conf_val)
+        y = h / 2
+        
+        # Track background
+        canvas.create_line(start_x, y, end_x, y, fill="#1e293b", width=6, capstyle="round")
+        
+        if self.adaptive_conf_val > 0.0:
+            glow_rgb = (int(59 * 0.4), int(130 * 0.4), int(246 * 0.4))
+            glow_hex = f"#{glow_rgb[0]:02x}{glow_rgb[1]:02x}{glow_rgb[2]:02x}"
+            canvas.create_line(start_x, y, active_x, y, fill=glow_hex, width=10, capstyle="round")
+            
+            core_hex = ACCENT_BLUE
+            canvas.create_line(start_x, y, active_x, y, fill=core_hex, width=4, capstyle="round")
 
     def get_fade_color(self, rgb, life):
         r, g, b = rgb

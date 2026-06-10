@@ -1,34 +1,40 @@
-import ctypes
-from ctypes import wintypes
+import platform
 import threading
 
-# Importando bibliotecas nativas do Windows para gerenciar atalhos globais
-user32 = ctypes.windll.user32
+# Determina se estamos no Windows
+is_windows = platform.system().lower() == "windows"
 
-# Tecla F8 em hexadecimal
-VK_F8 = 0x77
-# Modificadores de tecla (nenhum)
-MOD_NONE = 0x0000
-# Mensagem de Hotkey do Windows
-WM_HOTKEY = 0x0312
-# Mensagem de Quit para finalizar o loop
-WM_QUIT = 0x0012
+if is_windows:
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    # Tecla F8 em hexadecimal
+    VK_F8 = 0x77
+    # Modificadores de tecla (nenhum)
+    MOD_NONE = 0x0000
+    # Mensagem de Hotkey do Windows
+    WM_HOTKEY = 0x0312
+    # Mensagem de Quit para finalizar o loop
+    WM_QUIT = 0x0012
+else:
+    user32 = None
 
 class GlobalHotkeyListener(threading.Thread):
-    def __init__(self, callback, key_code=VK_F8, modifiers=MOD_NONE):
+    def __init__(self, callback, key_code=None, modifiers=None):
         super().__init__(daemon=True)
         self.callback = callback
-        self.key_code = key_code
-        self.modifiers = modifiers
         self.running = False
-        self.hotkey_id = 101  # ID unico para identificar o atalho
 
     def run(self):
+        if not is_windows:
+            print("[Hotkey] Atalho F8 global desativado: não suportado em sistemas não-Windows.")
+            return
+            
         self.running = True
+        self.hotkey_id = 101  # ID unico para identificar o atalho
         
         # Registrar o hotkey global no Windows
-        # hWnd=None associa o atalho a thread atual
-        res = user32.RegisterHotKey(None, self.hotkey_id, self.modifiers, self.key_code)
+        res = user32.RegisterHotKey(None, self.hotkey_id, MOD_NONE, VK_F8)
         if not res:
             print("[Hotkey] Erro: Nao foi possivel registrar a tecla F8 global.")
             self.running = False
@@ -58,6 +64,6 @@ class GlobalHotkeyListener(threading.Thread):
     def stop(self):
         """Interrompe o ouvinte e envia uma mensagem para desbloquear o GetMessageW."""
         self.running = False
-        if self.ident:
+        if is_windows and self.ident:
             # Envia mensagem WM_QUIT para acordar o GetMessageW
             user32.PostThreadMessageW(self.ident, WM_QUIT, 0, 0)
