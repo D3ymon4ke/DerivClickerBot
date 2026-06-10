@@ -1,3 +1,7 @@
+
+![Logo do Projeto](capturas/logo.png)
+
+
 # DerivClickerBot - Bot de Automação para Deriv (Modo Acumulador)
 
 Este é um bot profissional de automação de cliques por reconhecimento de imagem projetado para a plataforma Deriv, focado especificamente na estratégia de **Acumulador** (Accumulator).
