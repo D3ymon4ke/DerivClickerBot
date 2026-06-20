@@ -106,10 +106,10 @@ class ExecutionModeDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Modo de Execução")
-        self.geometry("480x220")
+        self.geometry("600x220")
         self.resizable(False, False)
         self.configure(fg_color=BG_DARK)
-        self.result = None # 'browser', 'derivclicker', 'stealth', or None
+        self.result = None # 'browser', 'derivclicker', 'stealth', 'ai_overlay', or None
         
         self.transient(parent)
         self.grab_set()
@@ -119,7 +119,7 @@ class ExecutionModeDialog(ctk.CTkToplevel):
         parent_y = parent.winfo_y()
         parent_w = parent.winfo_width()
         parent_h = parent.winfo_height()
-        x = parent_x + (parent_w - 480) // 2
+        x = parent_x + (parent_w - 600) // 2
         y = parent_y + (parent_h - 220) // 2
         self.geometry(f"+{x}+{y}")
         
@@ -151,7 +151,7 @@ class ExecutionModeDialog(ctk.CTkToplevel):
             border_width=1,
             corner_radius=8,
             font=ctk.CTkFont(size=11, weight="bold"),
-            width=140,
+            width=130,
             height=40,
             command=self.select_browser
         )
@@ -164,7 +164,7 @@ class ExecutionModeDialog(ctk.CTkToplevel):
             hover_color="#059669", 
             corner_radius=8,
             font=ctk.CTkFont(size=11, weight="bold"),
-            width=140,
+            width=130,
             height=40,
             command=self.select_derivclicker
         )
@@ -177,11 +177,24 @@ class ExecutionModeDialog(ctk.CTkToplevel):
             hover_color="#6d28d9", 
             corner_radius=8,
             font=ctk.CTkFont(size=11, weight="bold"),
-            width=140,
+            width=130,
             height=40,
             command=self.select_stealth
         )
         btn_stealth.pack(side="left", padx=4, expand=True)
+
+        btn_ai = ctk.CTkButton(
+            btn_frame, 
+            text="🧠 MODO IA (API)", 
+            fg_color="#0ea5e9", 
+            hover_color="#0284c7", 
+            corner_radius=8,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            width=130,
+            height=40,
+            command=self.select_ai_overlay
+        )
+        btn_ai.pack(side="left", padx=4, expand=True)
         
         btn_cancel = ctk.CTkButton(
             self, 
@@ -206,6 +219,10 @@ class ExecutionModeDialog(ctk.CTkToplevel):
         
     def select_stealth(self):
         self.result = "stealth"
+        self.destroy()
+
+    def select_ai_overlay(self):
+        self.result = "ai_overlay"
         self.destroy()
         
     def cancel(self):
@@ -427,6 +444,52 @@ class AppGui(ctk.CTk):
         self.entry_adaptive_losses.delete(0, "end")
         self.entry_adaptive_losses.insert(0, str(self.config.get("adaptive_relearn_losses", 3)))
         
+        # Modo IA
+        self.entry_ai_threshold.delete(0, "end")
+        self.entry_ai_threshold.insert(0, str(self.config.get("ai_threshold", 75.0)))
+        
+        self.entry_ai_lr.delete(0, "end")
+        self.entry_ai_lr.insert(0, str(self.config.get("ai_learning_rate", 0.01)))
+        
+        self.entry_ai_lookahead.delete(0, "end")
+        self.entry_ai_lookahead.insert(0, str(self.config.get("ai_lookahead_ticks", 3)))
+
+        self.entry_ai_cooldown.delete(0, "end")
+        self.entry_ai_cooldown.insert(0, str(self.config.get("ai_entry_cooldown", 10)))
+
+        self.entry_ai_min_ticks.delete(0, "end")
+        self.entry_ai_min_ticks.insert(0, str(self.config.get("ai_min_ticks_safe", 5)))
+
+        self.entry_ai_min_samples.delete(0, "end")
+        self.entry_ai_min_samples.insert(0, str(self.config.get("ai_min_samples_start", 500)))
+
+        self.entry_ai_win_value.delete(0, "end")
+        self.entry_ai_win_value.insert(0, f"{self.config.get('win_value', 1.50):.2f}")
+
+        self.entry_ai_contract_take_profit.delete(0, "end")
+        self.entry_ai_contract_take_profit.insert(0, f"{self.config.get('ai_contract_take_profit', 5.0):.2f}")
+
+        growth_rate = self.config.get("deriv_growth_rate", 0.01)
+        growth_percent_str = f"{int(round(growth_rate * 100))}%"
+        if growth_percent_str in ["1%", "2%", "3%", "4%", "5%"]:
+            self.combo_ai_growth_rate.set(growth_percent_str)
+        else:
+            self.combo_ai_growth_rate.set("1%")
+        
+        # Atualiza a engine de IA na interface
+        import ai_model
+        if ai_model.HAS_TORCH:
+            import torch
+            if torch.cuda.is_available() and self.config.get("ai_use_gpu", True):
+                self.lbl_ai_engine.configure(text="GPU (PyTorch)", text_color=ACCENT_GREEN)
+                self.btn_install_torch.configure(text="GPU Ativa", state="disabled", fg_color="#10b981")
+            else:
+                self.lbl_ai_engine.configure(text="CPU (PyTorch)", text_color="#f59e0b")
+                self.btn_install_torch.configure(text="GPU Disponível", state="disabled", fg_color="#f59e0b")
+        else:
+            self.lbl_ai_engine.configure(text="CPU (NumPy)", text_color="#f59e0b")
+            self.btn_install_torch.configure(text="Instalar PyTorch (GPU)", state="normal", fg_color=ACCENT_BLUE)
+        
         # Sensibilidade (se janela de config estiver aberta)
         sens = self.config.get("sensitivity", 0.8)
         if hasattr(self, "settings_slider_sens") and self.settings_slider_sens and self.settings_slider_sens.winfo_exists():
@@ -508,12 +571,104 @@ class AppGui(ctk.CTk):
             self.settings_entry_api_growth.delete(0, "end")
             self.settings_entry_api_growth.insert(0, f"{deriv_growth:.1f}")
             
+        deriv_acc_type = self.config.get("deriv_account_type", "demo").title()
+        if hasattr(self, "settings_combo_api_account_type") and self.settings_combo_api_account_type and self.settings_combo_api_account_type.winfo_exists():
+            self.settings_combo_api_account_type.set(deriv_acc_type)
+            
         deriv_use_api = self.config.get("deriv_use_api_trading", False)
         if hasattr(self, "settings_switch_use_api") and self.settings_switch_use_api and self.settings_switch_use_api.winfo_exists():
             if deriv_use_api:
                 self.settings_switch_use_api.select()
             else:
                 self.settings_switch_use_api.deselect()
+
+        # Deriv Contract Mode and Rise/Fall options
+        deriv_contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+        if hasattr(self, "settings_combo_contract_mode") and self.settings_combo_contract_mode and self.settings_combo_contract_mode.winfo_exists():
+            if deriv_contract_mode == "rise_fall":
+                self.settings_combo_contract_mode.set("Rise/Fall")
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack(fill="x", padx=15, pady=4)
+            elif deriv_contract_mode == "matches":
+                self.settings_combo_contract_mode.set("Matches")
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack_forget()
+            elif deriv_contract_mode == "differs":
+                self.settings_combo_contract_mode.set("Differs")
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack_forget()
+            else:
+                self.settings_combo_contract_mode.set("Accumulator")
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack_forget()
+
+        deriv_rf_dur = self.config.get("deriv_rf_duration_value", 5)
+        if hasattr(self, "settings_entry_rf_duration") and self.settings_entry_rf_duration and self.settings_entry_rf_duration.winfo_exists():
+            self.settings_entry_rf_duration.delete(0, "end")
+            self.settings_entry_rf_duration.insert(0, str(deriv_rf_dur))
+
+        deriv_rf_unit = self.config.get("deriv_rf_duration_unit", "t")
+        if hasattr(self, "settings_combo_rf_unit") and self.settings_combo_rf_unit and self.settings_combo_rf_unit.winfo_exists():
+            unit_label = "Ticks" if deriv_rf_unit == "t" else ("Segundos" if deriv_rf_unit == "s" else "Minutos")
+            self.settings_combo_rf_unit.set(unit_label)
+
+        deriv_rf_auto = self.config.get("deriv_rf_auto_duration", True)
+        if hasattr(self, "settings_switch_rf_auto") and self.settings_switch_rf_auto and self.settings_switch_rf_auto.winfo_exists():
+            if deriv_rf_auto:
+                self.settings_switch_rf_auto.select()
+            else:
+                self.settings_switch_rf_auto.deselect()
+
+        # Main AI contract mode
+        if hasattr(self, "combo_ai_contract_mode") and self.combo_ai_contract_mode.winfo_exists():
+            if deriv_contract_mode == "rise_fall":
+                self.combo_ai_contract_mode.set("Rise/Fall")
+            elif deriv_contract_mode == "matches":
+                self.combo_ai_contract_mode.set("Matches")
+            elif deriv_contract_mode == "differs":
+                self.combo_ai_contract_mode.set("Differs")
+            else:
+                self.combo_ai_contract_mode.set("Accumulator")
+
+        # Llama integration options
+        llama_enabled = self.config.get("llama_enabled", False)
+        if hasattr(self, "settings_switch_llama") and self.settings_switch_llama and self.settings_switch_llama.winfo_exists():
+            if llama_enabled:
+                self.settings_switch_llama.select()
+            else:
+                self.settings_switch_llama.deselect()
+
+        llama_prov = self.config.get("llama_provider", "ollama")
+        if hasattr(self, "settings_combo_llama_provider") and self.settings_combo_llama_provider and self.settings_combo_llama_provider.winfo_exists():
+            if llama_prov == "local":
+                self.settings_combo_llama_provider.set("Local Embutido")
+                if hasattr(self, "settings_entry_llama_url") and self.settings_entry_llama_url.winfo_exists():
+                    self.settings_entry_llama_url.configure(state="disabled")
+            else:
+                self.settings_combo_llama_provider.set("Ollama (API)")
+                if hasattr(self, "settings_entry_llama_url") and self.settings_entry_llama_url.winfo_exists():
+                    self.settings_entry_llama_url.configure(state="normal")
+
+        llama_url = self.config.get("llama_url", "http://localhost:11434/api/generate")
+        if hasattr(self, "settings_entry_llama_url") and self.settings_entry_llama_url and self.settings_entry_llama_url.winfo_exists():
+            # If enabled/disabled state is not overridden by Local Embutido, it will write
+            current_state = self.settings_entry_llama_url.cget("state")
+            if current_state == "disabled":
+                self.settings_entry_llama_url.configure(state="normal")
+                self.settings_entry_llama_url.delete(0, "end")
+                self.settings_entry_llama_url.insert(0, llama_url)
+                self.settings_entry_llama_url.configure(state="disabled")
+            else:
+                self.settings_entry_llama_url.delete(0, "end")
+                self.settings_entry_llama_url.insert(0, llama_url)
+
+        llama_model = self.config.get("llama_model", "llama3")
+        if hasattr(self, "settings_combo_llama_model") and self.settings_combo_llama_model and self.settings_combo_llama_model.winfo_exists():
+            avail_vals = list(self.settings_combo_llama_model.cget("values"))
+            if llama_model not in avail_vals:
+                avail_vals.append(llama_model)
+                self.settings_combo_llama_model.configure(values=avail_vals)
+            self.settings_combo_llama_model.set(llama_model)
 
         # Opcoes Extras (Janela de Configurações)
         play_sounds = self.config.get("play_sounds", True)
@@ -598,7 +753,8 @@ class AppGui(ctk.CTk):
             "random": "Intervalo Aleatório",
             "sequence": "Sequência de Cliques",
             "linered": "Número Vermelho",
-            "adaptive": "Modo Inteligente"
+            "adaptive": "Modo IA",
+            "ai": "Modo IA"
         }
         return mapping.get(key, "Intervalo Fixo")
 
@@ -609,7 +765,8 @@ class AppGui(ctk.CTk):
             "Sequência de Cliques": "sequence",
             "Linha Vermelha": "linered",
             "Número Vermelho": "linered",
-            "Modo Inteligente": "adaptive"
+            "Modo Inteligente": "ai",
+            "Modo IA": "ai"
         }
         return mapping.get(label, "fixed")
 
@@ -831,7 +988,7 @@ class AppGui(ctk.CTk):
         lbl_configs.pack(anchor="w", pady=(10, 15))
         
         # Seletor de Modo (Segmented Button para layout moderno)
-        self.seg_mode = ctk.CTkSegmentedButton(right_frame, values=["Intervalo Fixo", "Intervalo Aleatório", "Sequência de Cliques", "Número Vermelho", "Modo Inteligente"], command=self._mode_selection_changed)
+        self.seg_mode = ctk.CTkSegmentedButton(right_frame, values=["Intervalo Fixo", "Intervalo Aleatório", "Sequência de Cliques", "Número Vermelho", "Modo IA"], command=self._mode_selection_changed)
         self.seg_mode.pack(fill="x", pady=(0, 15))
         
         # Container de Modos Dinamicos (Agora Recolhível)
@@ -975,6 +1132,143 @@ class AppGui(ctk.CTk):
         self.entry_adaptive_losses = ctk.CTkEntry(col_losses, height=28, width=70)
         self.entry_adaptive_losses.pack(fill="x", pady=2)
         self.entry_adaptive_losses.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+
+        # --- SUBFRAME: MODO IA (NEURAL NETWORK) ---
+        self.frame_ai = ctk.CTkFrame(self.mode_container.content_frame, fg_color="transparent")
+        lbl_ai = ctk.CTkLabel(self.frame_ai, text="Configurações do Modo IA (Neural Network)", font=ctk.CTkFont(weight="bold"))
+        lbl_ai.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        ai_info = (
+            "Utiliza uma Rede Neural Profunda com Online Learning em tempo real para prever a\n"
+            "probabilidade de vitória. Auto-supervisionado com detecção de volatilidade do Accumulator."
+        )
+        ctk.CTkLabel(self.frame_ai, text=ai_info,
+                     font=ctk.CTkFont(size=11), text_color="#94a3b8",
+                     justify="left").pack(anchor="w", padx=15, pady=(0, 10))
+                     
+        row_ai_inputs = ctk.CTkFrame(self.frame_ai, fg_color="transparent")
+        row_ai_inputs.pack(fill="x", padx=15, pady=5)
+        
+        # Limiar de Confiança (Threshold)
+        col_thresh = ctk.CTkFrame(row_ai_inputs, fg_color="transparent")
+        col_thresh.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_thresh, text="Limiar Confiança (%)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_threshold = ctk.CTkEntry(col_thresh, height=28, width=70)
+        self.entry_ai_threshold.pack(fill="x", pady=2)
+        self.entry_ai_threshold.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        # Learning Rate
+        col_lr = ctk.CTkFrame(row_ai_inputs, fg_color="transparent")
+        col_lr.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_lr, text="Learning Rate", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_lr = ctk.CTkEntry(col_lr, height=28, width=70)
+        self.entry_ai_lr.pack(fill="x", pady=2)
+        self.entry_ai_lr.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        # Lookahead Ticks
+        col_look = ctk.CTkFrame(row_ai_inputs, fg_color="transparent")
+        col_look.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_look, text="Ticks de Validação (K)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_lookahead = ctk.CTkEntry(col_look, height=28, width=70)
+        self.entry_ai_lookahead.pack(fill="x", pady=2)
+        self.entry_ai_lookahead.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        # GPU / PyTorch status
+        col_gpu = ctk.CTkFrame(row_ai_inputs, fg_color="transparent")
+        col_gpu.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_gpu, text="Aceleração GPU", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.btn_install_torch = ctk.CTkButton(col_gpu, text="Ativar GPU", height=28, width=80, fg_color=ACCENT_BLUE, text_color="white", command=self._install_torch_async)
+        self.btn_install_torch.pack(fill="x", pady=2)
+
+        # Segunda linha de inputs da IA: parâmetros de entrada inteligente
+        row_ai_inputs2 = ctk.CTkFrame(self.frame_ai, fg_color="transparent")
+        row_ai_inputs2.pack(fill="x", padx=15, pady=5)
+
+        col_cooldown = ctk.CTkFrame(row_ai_inputs2, fg_color="transparent")
+        col_cooldown.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_cooldown, text="Cooldown pós-entrada (ticks)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_cooldown = ctk.CTkEntry(col_cooldown, height=28, width=70, placeholder_text="10")
+        self.entry_ai_cooldown.pack(fill="x", pady=2)
+        self.entry_ai_cooldown.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+
+        col_min_safe = ctk.CTkFrame(row_ai_inputs2, fg_color="transparent")
+        col_min_safe.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_min_safe, text="Ticks seguros mínimos", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_min_ticks = ctk.CTkEntry(col_min_safe, height=28, width=70, placeholder_text="5")
+        self.entry_ai_min_ticks.pack(fill="x", pady=2)
+        self.entry_ai_min_ticks.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+
+        col_min_samples = ctk.CTkFrame(row_ai_inputs2, fg_color="transparent")
+        col_min_samples.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_min_samples, text="Amostras Mínimas", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_min_samples = ctk.CTkEntry(col_min_samples, height=28, width=70, placeholder_text="500")
+        self.entry_ai_min_samples.pack(fill="x", pady=2)
+        self.entry_ai_min_samples.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+
+        # Terceira linha de inputs da IA: valor da entrada, meta do contrato e multiplicador
+        row_ai_inputs3 = ctk.CTkFrame(self.frame_ai, fg_color="transparent")
+        row_ai_inputs3.pack(fill="x", padx=15, pady=5)
+
+        col_ai_stake = ctk.CTkFrame(row_ai_inputs3, fg_color="transparent")
+        col_ai_stake.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_ai_stake, text="Valor Entrada (Stake $)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_win_value = ctk.CTkEntry(col_ai_stake, height=28, width=70)
+        self.entry_ai_win_value.pack(fill="x", pady=2)
+        self.entry_ai_win_value.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+
+        col_ai_tp = ctk.CTkFrame(row_ai_inputs3, fg_color="transparent")
+        col_ai_tp.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_ai_tp, text="Meta Lucro Contrato ($)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.entry_ai_contract_take_profit = ctk.CTkEntry(col_ai_tp, height=28, width=70)
+        self.entry_ai_contract_take_profit.pack(fill="x", pady=2)
+        self.entry_ai_contract_take_profit.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+
+        col_ai_growth = ctk.CTkFrame(row_ai_inputs3, fg_color="transparent")
+        col_ai_growth.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_ai_growth, text="Multiplicador (%)", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.combo_ai_growth_rate = ctk.CTkComboBox(col_ai_growth, values=["1%", "2%", "3%", "4%", "5%"], height=28, command=lambda e: self._gui_setting_changed())
+        self.combo_ai_growth_rate.pack(fill="x", pady=2)
+
+        col_ai_contract_mode = ctk.CTkFrame(row_ai_inputs3, fg_color="transparent")
+        col_ai_contract_mode.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkLabel(col_ai_contract_mode, text="Tipo de Contrato", font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.combo_ai_contract_mode = ctk.CTkComboBox(col_ai_contract_mode, values=["Accumulator", "Rise/Fall", "Matches", "Differs"], height=28, command=lambda e: self._on_main_contract_mode_changed())
+        self.combo_ai_contract_mode.pack(fill="x", pady=2)
+
+        # --- PAINEL DE MÉTRICAS DA IA EM TEMPO REAL ---
+        self.frame_ai_metrics = ctk.CTkFrame(self.frame_ai, fg_color="#1e293b", border_width=1, border_color="#334155")
+        self.frame_ai_metrics.pack(fill="x", padx=15, pady=(10, 5))
+        
+        row_metrics = ctk.CTkFrame(self.frame_ai_metrics, fg_color="transparent")
+        row_metrics.pack(fill="x", padx=10, pady=8)
+        
+        # Métrica Loss
+        col_m_loss = ctk.CTkFrame(row_metrics, fg_color="transparent")
+        col_m_loss.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(col_m_loss, text="Modelo Loss", font=ctk.CTkFont(size=10, weight="bold"), text_color="#94a3b8").pack()
+        self.lbl_ai_loss = ctk.CTkLabel(col_m_loss, text="0.0000", font=ctk.CTkFont(size=14, weight="bold", family="Consolas"), text_color=ACCENT_BLUE)
+        self.lbl_ai_loss.pack()
+        
+        # Métrica Acurácia
+        col_m_acc = ctk.CTkFrame(row_metrics, fg_color="transparent")
+        col_m_acc.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(col_m_acc, text="Acurácia", font=ctk.CTkFont(size=10, weight="bold"), text_color="#94a3b8").pack()
+        self.lbl_ai_accuracy = ctk.CTkLabel(col_m_acc, text="0.0%", font=ctk.CTkFont(size=14, weight="bold", family="Consolas"), text_color=ACCENT_GREEN)
+        self.lbl_ai_accuracy.pack()
+        
+        # Métrica Dataset
+        col_m_mem = ctk.CTkFrame(row_metrics, fg_color="transparent")
+        col_m_mem.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(col_m_mem, text="Amostras", font=ctk.CTkFont(size=10, weight="bold"), text_color="#94a3b8").pack()
+        self.lbl_ai_memory = ctk.CTkLabel(col_m_mem, text="0", font=ctk.CTkFont(size=14, weight="bold", family="Consolas"), text_color="white")
+        self.lbl_ai_memory.pack()
+        
+        # Métrica Engine
+        col_m_eng = ctk.CTkFrame(row_metrics, fg_color="transparent")
+        col_m_eng.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(col_m_eng, text="Hardware", font=ctk.CTkFont(size=10, weight="bold"), text_color="#94a3b8").pack()
+        self.lbl_ai_engine = ctk.CTkLabel(col_m_eng, text="CPU (NumPy)", font=ctk.CTkFont(size=12, weight="bold"), text_color="#f59e0b")
+        self.lbl_ai_engine.pack()
 
         # --- NOVO: CONTAINER DE AGENDAMENTO (Agora Recolhível) ---
         self.schedule_frame = CollapsibleFrame(right_frame, title="Agendamento de Início", start_collapsed=True)
@@ -1839,6 +2133,7 @@ class AppGui(ctk.CTk):
         self.frame_sequence.pack_forget()
         self.frame_linered.pack_forget()
         self.frame_adaptive.pack_forget()
+        self.frame_ai.pack_forget()
         
         if mode_label == "Intervalo Fixo":
             self.frame_fixed.pack(fill="x", pady=5)
@@ -1848,8 +2143,8 @@ class AppGui(ctk.CTk):
             self.frame_sequence.pack(fill="x", pady=5)
         elif mode_label == "Linha Vermelha" or mode_label == "Número Vermelho":
             self.frame_linered.pack(fill="x", pady=5)
-        elif mode_label == "Modo Inteligente":
-            self.frame_adaptive.pack(fill="x", pady=5)
+        elif mode_label == "Modo Inteligente" or mode_label == "Modo IA":
+            self.frame_ai.pack(fill="x", pady=5)
 
     def _slider_fixed_changed(self, val):
         self.lbl_fixed_val.configure(text=f"{val:.1f}s")
@@ -1871,6 +2166,49 @@ class AppGui(ctk.CTk):
             self.slider_rand_min.set(val)
             self.lbl_rand_min_val.configure(text=f"{val:.1f}s")
         self.lbl_rand_max_val.configure(text=f"{val:.1f}s")
+        self._gui_setting_changed()
+
+    def _on_main_contract_mode_changed(self):
+        if hasattr(self, "combo_ai_contract_mode") and self.combo_ai_contract_mode.winfo_exists():
+            val = self.combo_ai_contract_mode.get()
+            if val == "Rise/Fall":
+                self.config["deriv_contract_mode"] = "rise_fall"
+            elif val == "Matches":
+                self.config["deriv_contract_mode"] = "matches"
+            elif val == "Differs":
+                self.config["deriv_contract_mode"] = "differs"
+            else:
+                self.config["deriv_contract_mode"] = "accumulator"
+            if hasattr(self, "settings_combo_contract_mode") and self.settings_combo_contract_mode.winfo_exists():
+                self.settings_combo_contract_mode.set(val)
+                self._on_contract_mode_changed()
+            self._gui_setting_changed()
+
+    def _on_llama_provider_changed(self):
+        if hasattr(self, "settings_combo_llama_provider") and self.settings_combo_llama_provider.winfo_exists():
+            prov = self.settings_combo_llama_provider.get()
+            if prov == "Local Embutido":
+                self.config["llama_provider"] = "local"
+                if hasattr(self, "settings_entry_llama_url") and self.settings_entry_llama_url.winfo_exists():
+                    self.settings_entry_llama_url.configure(state="disabled")
+                if hasattr(self, "settings_combo_llama_model") and self.settings_combo_llama_model.winfo_exists():
+                    avail_vals = list(self.settings_combo_llama_model.cget("values"))
+                    local_model = "Qwen/Qwen2.5-0.5B-Instruct"
+                    if local_model not in avail_vals:
+                        avail_vals.append(local_model)
+                        self.settings_combo_llama_model.configure(values=avail_vals)
+                    self.settings_combo_llama_model.set(local_model)
+            else:
+                self.config["llama_provider"] = "ollama"
+                if hasattr(self, "settings_entry_llama_url") and self.settings_entry_llama_url.winfo_exists():
+                    self.settings_entry_llama_url.configure(state="normal")
+                if hasattr(self, "settings_combo_llama_model") and self.settings_combo_llama_model.winfo_exists():
+                    avail = self._get_available_llama_models()
+                    self.settings_combo_llama_model.configure(values=avail)
+                    if "qwen2.5:0.5b" in avail:
+                        self.settings_combo_llama_model.set("qwen2.5:0.5b")
+                    else:
+                        self.settings_combo_llama_model.set("llama3")
         self._gui_setting_changed()
 
     def _slider_sens_changed(self, val):
@@ -1923,10 +2261,40 @@ class AppGui(ctk.CTk):
 
         # Atualiza o dicionario
         # Validação financeira
+        active_widget = self.focus_get()
+        ai_entry_widget = getattr(self, "entry_ai_win_value", None)
+        main_entry_widget = getattr(self, "entry_win_value", None)
+        
+        ai_entry_inner = getattr(ai_entry_widget, "_entry", None) if ai_entry_widget else None
+        main_entry_inner = getattr(main_entry_widget, "_entry", None) if main_entry_widget else None
+
         try:
-            win_val = float(self.entry_win_value.get().replace(",", "."))
+            if ai_entry_widget and ai_entry_widget.winfo_exists() and active_widget == ai_entry_inner:
+                win_val = float(ai_entry_widget.get().replace(",", "."))
+                try:
+                    main_val = float(main_entry_widget.get().replace(",", "."))
+                except ValueError:
+                    main_val = -1.0
+                if abs(win_val - main_val) > 0.001:
+                    main_entry_widget.delete(0, "end")
+                    main_entry_widget.insert(0, f"{win_val:.2f}")
+            elif main_entry_widget and main_entry_widget.winfo_exists() and active_widget == main_entry_inner:
+                win_val = float(main_entry_widget.get().replace(",", "."))
+                if ai_entry_widget and ai_entry_widget.winfo_exists():
+                    try:
+                        ai_val = float(ai_entry_widget.get().replace(",", "."))
+                    except ValueError:
+                        ai_val = -1.0
+                    if abs(win_val - ai_val) > 0.001:
+                        ai_entry_widget.delete(0, "end")
+                        ai_entry_widget.insert(0, f"{win_val:.2f}")
+            else:
+                win_val = float(main_entry_widget.get().replace(",", "."))
         except ValueError:
-            win_val = 1.50
+            try:
+                win_val = float(self.config.get("win_value", 1.50))
+            except Exception:
+                win_val = 1.50
             
         try:
             loss_val = float(self.entry_loss_value.get().replace(",", "."))
@@ -1978,6 +2346,37 @@ class AppGui(ctk.CTk):
             self.config["adaptive_relearn_losses"] = int(self.entry_adaptive_losses.get())
         except ValueError:
             pass
+            
+        # Modo IA
+        try:
+            self.config["ai_threshold"] = float(self.entry_ai_threshold.get().replace(",", "."))
+        except ValueError:
+            pass
+            
+        try:
+            self.config["ai_learning_rate"] = float(self.entry_ai_lr.get().replace(",", "."))
+        except ValueError:
+            pass
+            
+        try:
+            self.config["ai_lookahead_ticks"] = int(self.entry_ai_lookahead.get())
+        except ValueError:
+            pass
+
+        try:
+            self.config["ai_entry_cooldown"] = int(self.entry_ai_cooldown.get())
+        except (ValueError, AttributeError):
+            pass
+
+        try:
+            self.config["ai_min_ticks_safe"] = int(self.entry_ai_min_ticks.get())
+        except (ValueError, AttributeError):
+            pass
+
+        try:
+            self.config["ai_min_samples_start"] = int(self.entry_ai_min_samples.get())
+        except (ValueError, AttributeError):
+            pass
         
         # Leitura da janela de configurações se estiver aberta
         if hasattr(self, "settings_slider_sens") and self.settings_slider_sens and self.settings_slider_sens.winfo_exists():
@@ -2023,21 +2422,135 @@ class AppGui(ctk.CTk):
             self.config["deriv_app_id"] = self.settings_entry_api_appid.get().strip()
         if hasattr(self, "settings_combo_api_symbol") and self.settings_combo_api_symbol and self.settings_combo_api_symbol.winfo_exists():
             self.config["deriv_symbol"] = self.settings_combo_api_symbol.get()
-        if hasattr(self, "settings_entry_api_growth") and self.settings_entry_api_growth and self.settings_entry_api_growth.winfo_exists():
-            try:
-                growth_percent = float(self.settings_entry_api_growth.get().replace(",", "."))
-                self.config["deriv_growth_rate"] = round(growth_percent / 100.0, 4)
-            except ValueError:
-                pass
+        # Multiplicador/Growth Rate synchronisation & parsing
+        ai_combo_widget = getattr(self, "combo_ai_growth_rate", None)
+        adv_entry_widget = getattr(self, "settings_entry_api_growth", None)
+        
+        ai_combo_inner = getattr(ai_combo_widget, "_entry", None) if ai_combo_widget else None
+        adv_entry_inner = getattr(adv_entry_widget, "_entry", None) if adv_entry_widget else None
+
+        try:
+            if ai_combo_widget and ai_combo_widget.winfo_exists() and (active_widget == ai_combo_inner or active_widget == ai_combo_widget):
+                growth_pct = int(ai_combo_widget.get().replace("%", ""))
+                deriv_growth = round(growth_pct / 100.0, 4)
+                if adv_entry_widget and adv_entry_widget.winfo_exists():
+                    try:
+                        adv_pct = float(adv_entry_widget.get().replace(",", "."))
+                    except ValueError:
+                        adv_pct = -1.0
+                    if abs(growth_pct - adv_pct) > 0.001:
+                        adv_entry_widget.delete(0, "end")
+                        adv_entry_widget.insert(0, str(growth_pct))
+            elif adv_entry_widget and adv_entry_widget.winfo_exists() and active_widget == adv_entry_inner:
+                growth_percent = float(adv_entry_widget.get().replace(",", "."))
+                deriv_growth = round(growth_percent / 100.0, 4)
+                if ai_combo_widget and ai_combo_widget.winfo_exists():
+                    growth_percent_str = f"{int(round(growth_percent))}%"
+                    if growth_percent_str in ["1%", "2%", "3%", "4%", "5%"] and ai_combo_widget.get() != growth_percent_str:
+                        ai_combo_widget.set(growth_percent_str)
+            else:
+                if hasattr(self, "combo_ai_growth_rate") and self.combo_ai_growth_rate and self.combo_ai_growth_rate.winfo_exists():
+                    growth_pct = int(self.combo_ai_growth_rate.get().replace("%", ""))
+                    deriv_growth = round(growth_pct / 100.0, 4)
+                elif hasattr(self, "settings_entry_api_growth") and self.settings_entry_api_growth and self.settings_entry_api_growth.winfo_exists():
+                    try:
+                        growth_percent = float(self.settings_entry_api_growth.get().replace(",", "."))
+                        deriv_growth = round(growth_percent / 100.0, 4)
+                    except ValueError:
+                        deriv_growth = self.config.get("deriv_growth_rate", 0.01)
+                else:
+                    deriv_growth = self.config.get("deriv_growth_rate", 0.01)
+        except Exception:
+            deriv_growth = self.config.get("deriv_growth_rate", 0.01)
+            
+        self.config["deriv_growth_rate"] = deriv_growth
         if hasattr(self, "settings_switch_use_api") and self.settings_switch_use_api and self.settings_switch_use_api.winfo_exists():
             self.config["deriv_use_api_trading"] = self.settings_switch_use_api.get() == 1
+        if hasattr(self, "settings_combo_api_account_type") and self.settings_combo_api_account_type and self.settings_combo_api_account_type.winfo_exists():
+            self.config["deriv_account_type"] = self.settings_combo_api_account_type.get().strip().lower()
             
+        # Meta de Lucro por Contrato (Modo IA)
+        try:
+            self.config["ai_contract_take_profit"] = float(self.entry_ai_contract_take_profit.get().replace(",", "."))
+        except (ValueError, AttributeError):
+            pass
+
+        # Modo do Contrato
+        if hasattr(self, "combo_ai_contract_mode") and self.combo_ai_contract_mode and self.combo_ai_contract_mode.winfo_exists():
+            cm_val = self.combo_ai_contract_mode.get().strip()
+            if cm_val == "Rise/Fall":
+                self.config["deriv_contract_mode"] = "rise_fall"
+            elif cm_val == "Matches":
+                self.config["deriv_contract_mode"] = "matches"
+            elif cm_val == "Differs":
+                self.config["deriv_contract_mode"] = "differs"
+            else:
+                self.config["deriv_contract_mode"] = "accumulator"
+        elif hasattr(self, "settings_combo_contract_mode") and self.settings_combo_contract_mode and self.settings_combo_contract_mode.winfo_exists():
+            cm_val = self.settings_combo_contract_mode.get().strip()
+            if cm_val == "Rise/Fall":
+                self.config["deriv_contract_mode"] = "rise_fall"
+            elif cm_val == "Matches":
+                self.config["deriv_contract_mode"] = "matches"
+            elif cm_val == "Differs":
+                self.config["deriv_contract_mode"] = "differs"
+            else:
+                self.config["deriv_contract_mode"] = "accumulator"
+
+        # Rise/Fall settings
+        if hasattr(self, "settings_entry_rf_duration") and self.settings_entry_rf_duration and self.settings_entry_rf_duration.winfo_exists():
+            try:
+                self.config["deriv_rf_duration_value"] = int(self.settings_entry_rf_duration.get())
+            except ValueError:
+                pass
+        if hasattr(self, "settings_combo_rf_unit") and self.settings_combo_rf_unit and self.settings_combo_rf_unit.winfo_exists():
+            unit_val = self.settings_combo_rf_unit.get().strip()
+            unit_code = "t" if unit_val == "Ticks" else ("s" if unit_val == "Segundos" else "m")
+            self.config["deriv_rf_duration_unit"] = unit_code
+        if hasattr(self, "settings_switch_rf_auto") and self.settings_switch_rf_auto and self.settings_switch_rf_auto.winfo_exists():
+            self.config["deriv_rf_auto_duration"] = self.settings_switch_rf_auto.get() == 1
+
+        # Llama settings
+        if hasattr(self, "settings_switch_llama") and self.settings_switch_llama and self.settings_switch_llama.winfo_exists():
+            self.config["llama_enabled"] = self.settings_switch_llama.get() == 1
+        if hasattr(self, "settings_combo_llama_provider") and self.settings_combo_llama_provider and self.settings_combo_llama_provider.winfo_exists():
+            prov_val = self.settings_combo_llama_provider.get().strip()
+            self.config["llama_provider"] = "local" if prov_val == "Local Embutido" else "ollama"
+        if hasattr(self, "settings_entry_llama_url") and self.settings_entry_llama_url and self.settings_entry_llama_url.winfo_exists():
+            self.config["llama_url"] = self.settings_entry_llama_url.get().strip()
+        if hasattr(self, "settings_combo_llama_model") and self.settings_combo_llama_model and self.settings_combo_llama_model.winfo_exists():
+            self.config["llama_model"] = self.settings_combo_llama_model.get().strip()
+
         # Salva no arquivo JSON
         config_manager.save_config(self.config)
         
         # Se o bot estiver rodando, atualiza a configuracao dele dinamicamente
         if self.bot and self.bot.running:
             self.bot.config = self.config
+            if self.bot.api_client:
+                self.bot.api_client.growth_rate = self.config.get("deriv_growth_rate", 0.01)
+                self.bot.api_client._request_proposal()
+
+    def _get_available_llama_models(self):
+        models = []
+        try:
+            import urllib.request
+            import json
+            req = urllib.request.Request("http://localhost:11434/api/tags")
+            with urllib.request.urlopen(req, timeout=1.0) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                for m in data.get("models", []):
+                    name = m.get("name")
+                    if name and name not in models:
+                        models.append(name)
+        except Exception:
+            pass
+
+        defaults = ["qwen2.5:0.5b", "llama3", "Qwen/Qwen2.5-0.5B-Instruct"]
+        for d in defaults:
+            if d not in models:
+                models.append(d)
+        return models
 
     def open_settings_popup(self):
         if self.settings_win is not None and self.settings_win.winfo_exists():
@@ -2178,6 +2691,36 @@ class AppGui(ctk.CTk):
         self.settings_switch_use_api = ctk.CTkSwitch(sec5_frame, text="Ativar Operações por API (Sem Cliques)", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
         self.settings_switch_use_api.pack(anchor="w", padx=15, pady=4)
         
+        row_api_mode = ctk.CTkFrame(sec5_frame, fg_color="transparent")
+        row_api_mode.pack(fill="x", padx=15, pady=6)
+        
+        col_contract_mode = ctk.CTkFrame(row_api_mode, fg_color="transparent")
+        col_contract_mode.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ctk.CTkLabel(col_contract_mode, text="Tipo de Contrato", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_combo_contract_mode = ctk.CTkComboBox(col_contract_mode, values=["Accumulator", "Rise/Fall", "Matches", "Differs"], height=28, command=lambda e: self._on_contract_mode_changed())
+        self.settings_combo_contract_mode.pack(fill="x", pady=2)
+        
+        self.settings_frame_rf = ctk.CTkFrame(sec5_frame, fg_color="transparent")
+        
+        row_rf_inputs = ctk.CTkFrame(self.settings_frame_rf, fg_color="transparent")
+        row_rf_inputs.pack(fill="x", pady=6)
+        
+        col_rf_dur = ctk.CTkFrame(row_rf_inputs, fg_color="transparent")
+        col_rf_dur.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ctk.CTkLabel(col_rf_dur, text="Duração do Contrato", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_entry_rf_duration = ctk.CTkEntry(col_rf_dur, height=28, placeholder_text="5")
+        self.settings_entry_rf_duration.pack(fill="x", pady=2)
+        self.settings_entry_rf_duration.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        col_rf_unit = ctk.CTkFrame(row_rf_inputs, fg_color="transparent")
+        col_rf_unit.pack(side="left", fill="x", expand=True, padx=(5, 5))
+        ctk.CTkLabel(col_rf_unit, text="Unidade", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_combo_rf_unit = ctk.CTkComboBox(col_rf_unit, values=["Ticks", "Segundos", "Minutos"], height=28, command=lambda e: self._gui_setting_changed())
+        self.settings_combo_rf_unit.pack(fill="x", pady=2)
+        
+        self.settings_switch_rf_auto = ctk.CTkSwitch(self.settings_frame_rf, text="Duração Automática por IA", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_rf_auto.pack(anchor="w", pady=4)
+        
         row_api_inputs = ctk.CTkFrame(sec5_frame, fg_color="transparent")
         row_api_inputs.pack(fill="x", padx=15, pady=6)
         
@@ -2210,6 +2753,15 @@ class AppGui(ctk.CTk):
         self.settings_entry_api_growth = ctk.CTkEntry(col_api_growth, height=28, placeholder_text="1.0")
         self.settings_entry_api_growth.pack(fill="x", pady=2)
         self.settings_entry_api_growth.bind("<KeyRelease>", self._gui_setting_changed)
+                
+        row_api_inputs3 = ctk.CTkFrame(sec5_frame, fg_color="transparent")
+        row_api_inputs3.pack(fill="x", padx=15, pady=6)
+        
+        col_api_account_type = ctk.CTkFrame(row_api_inputs3, fg_color="transparent")
+        col_api_account_type.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(col_api_account_type, text="Tipo de Conta (PAT)", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_combo_api_account_type = ctk.CTkComboBox(col_api_account_type, values=["Demo", "Real"], height=28, command=lambda e: self._gui_setting_changed())
+        self.settings_combo_api_account_type.pack(fill="x", pady=2)
         
         row_api_actions = ctk.CTkFrame(sec5_frame, fg_color="transparent")
         row_api_actions.pack(fill="x", padx=15, pady=(4, 12))
@@ -2223,6 +2775,39 @@ class AppGui(ctk.CTk):
         
         self.lbl_api_status = ctk.CTkLabel(sec5_frame, text="", font=ctk.CTkFont(size=11), text_color="#94a3b8")
         self.lbl_api_status.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # SECTION 6: INTEGRAÇÃO IA LLAMA (OLLAMA)
+        sec6_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
+        sec6_frame.pack(fill="x", padx=10, pady=10)
+        
+        lbl_sec6_title = ctk.CTkLabel(sec6_frame, text="🧠 Integração IA Llama (Ollama)", font=ctk.CTkFont(size=13, weight="bold"), text_color="#38bdf8")
+        lbl_sec6_title.pack(anchor="w", padx=15, pady=(10, 5))
+        
+        self.settings_switch_llama = ctk.CTkSwitch(sec6_frame, text="Habilitar IA Llama (Tomada de Decisão)", progress_color=ACCENT_GREEN, command=lambda: self._gui_setting_changed())
+        self.settings_switch_llama.pack(anchor="w", padx=15, pady=4)
+
+        row_llama_provider = ctk.CTkFrame(sec6_frame, fg_color="transparent")
+        row_llama_provider.pack(fill="x", padx=15, pady=4)
+        ctk.CTkLabel(row_llama_provider, text="Provedor do Llama", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(side="left")
+        self.settings_combo_llama_provider = ctk.CTkComboBox(row_llama_provider, values=["Ollama (API)", "Local Embutido"], height=28, width=150, command=lambda e: self._on_llama_provider_changed())
+        self.settings_combo_llama_provider.pack(side="right")
+        
+        row_llama_inputs = ctk.CTkFrame(sec6_frame, fg_color="transparent")
+        row_llama_inputs.pack(fill="x", padx=15, pady=6)
+        
+        col_llama_url = ctk.CTkFrame(row_llama_inputs, fg_color="transparent")
+        col_llama_url.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ctk.CTkLabel(col_llama_url, text="Endpoint URL (Ollama)", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        self.settings_entry_llama_url = ctk.CTkEntry(col_llama_url, height=28, placeholder_text="http://localhost:11434/api/generate")
+        self.settings_entry_llama_url.pack(fill="x", pady=2)
+        self.settings_entry_llama_url.bind("<KeyRelease>", lambda e: self._gui_setting_changed())
+        
+        col_llama_model = ctk.CTkFrame(row_llama_inputs, fg_color="transparent")
+        col_llama_model.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        ctk.CTkLabel(col_llama_model, text="Modelo Llama", font=ctk.CTkFont(size=11), text_color="#94a3b8").pack(anchor="w")
+        avail_models = self._get_available_llama_models()
+        self.settings_combo_llama_model = ctk.CTkComboBox(col_llama_model, values=avail_models, height=28, command=lambda e: self._gui_setting_changed())
+        self.settings_combo_llama_model.pack(fill="x", pady=2)
 
         # SECTION 4: SISTEMA E LOGS
         sec4_frame = ctk.CTkFrame(scroll_frame, fg_color="#0f172a", border_width=1, border_color="#334155")
@@ -2251,6 +2836,31 @@ class AppGui(ctk.CTk):
         
         # Popula as configurações nos novos widgets da tela de settings
         self._apply_config_to_gui()
+
+    def _on_contract_mode_changed(self):
+        if hasattr(self, "settings_combo_contract_mode") and self.settings_combo_contract_mode.winfo_exists():
+            val = self.settings_combo_contract_mode.get()
+            if val == "Rise/Fall":
+                self.config["deriv_contract_mode"] = "rise_fall"
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack(fill="x", padx=15, pady=4)
+            elif val == "Matches":
+                self.config["deriv_contract_mode"] = "matches"
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack_forget()
+            elif val == "Differs":
+                self.config["deriv_contract_mode"] = "differs"
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack_forget()
+            else:
+                self.config["deriv_contract_mode"] = "accumulator"
+                if hasattr(self, "settings_frame_rf") and self.settings_frame_rf.winfo_exists():
+                    self.settings_frame_rf.pack_forget()
+            
+            # Sync main AI contract mode combo too if exists
+            if hasattr(self, "combo_ai_contract_mode") and self.combo_ai_contract_mode.winfo_exists():
+                self.combo_ai_contract_mode.set(val)
+        self._gui_setting_changed()
 
     def _test_sound(self):
         import winsound, pygame, os
@@ -2347,6 +2957,26 @@ class AppGui(ctk.CTk):
                 return
             self.config["deriv_use_api_trading"] = True
             self.log_message("Modo STEALTH iniciado: Operações rodando em segundo plano via API da Deriv.")
+        elif mode == "ai_overlay":
+            self.config["mode"] = "ai"
+            self.seg_mode.set("IA (Rede Neural)")
+            token = self.config.get("deriv_api_token", "").strip()
+            if not token:
+                messagebox.showerror("Erro de Configuração", "O Modo IA requer um Token de Acesso API da Deriv.\nPor favor, configure o Token nas Configurações Avançadas antes de iniciar.")
+                return
+            self.config["deriv_use_api_trading"] = True
+            self.log_message("Modo IA (API) iniciado: Operações rodando em segundo plano via API da Deriv e exibindo overlay.")
+            
+            # Auto-exibe o overlay
+            if not self.overlay or not self.overlay.winfo_exists():
+                from floating_overlay import FloatingOverlay
+                self.overlay = FloatingOverlay(self)
+                self.overlay.on_panic_cb = self.btn_panic_clicked
+            self.overlay.deiconify()
+            self.overlay.reveal_tab = "general" if not hasattr(self.overlay, "active_tab") else self.overlay.active_tab
+            self.overlay.lift()
+            self.overlay.attributes("-topmost", True)
+            self.btn_overlay.configure(fg_color=ACCENT_BLUE)
         elif mode == "derivclicker":
             try:
                 if getattr(sys, 'frozen', False):
@@ -2366,6 +2996,17 @@ class AppGui(ctk.CTk):
         else:
             if mode == "stealth":
                 self.lbl_status_value.configure(text="STEALTH 🥷", text_color="#a855f7")
+            elif mode == "ai_overlay" or self.config.get("mode") == "ai":
+                self.lbl_status_value.configure(text="EXECUTANDO (IA)", text_color=ACCENT_GREEN)
+                # Auto-exibe o overlay também caso o usuário tenha clicado em outro botão mas esteja no modo IA
+                if not self.overlay or not self.overlay.winfo_exists():
+                    from floating_overlay import FloatingOverlay
+                    self.overlay = FloatingOverlay(self)
+                    self.overlay.on_panic_cb = self.btn_panic_clicked
+                self.overlay.deiconify()
+                self.overlay.lift()
+                self.overlay.attributes("-topmost", True)
+                self.btn_overlay.configure(fg_color=ACCENT_BLUE)
             else:
                 self.lbl_status_value.configure(text="EXECUTANDO", text_color=ACCENT_GREEN)
             
@@ -2415,7 +3056,245 @@ class AppGui(ctk.CTk):
             on_start_execution_cb=self.bot_started_execution,
             on_finance_cb=self.update_finance_metric
         )
+        self.bot.on_ai_metrics_cb = self._on_ai_metrics_received
+        if self.execution_mode == "derivclicker":
+            self.bot.setup_in_progress = True
+            threading.Thread(target=self._run_clickerbot_setup, daemon=True).start()
         self.bot.start_bot()
+
+    def _run_clickerbot_setup(self):
+        import pyautogui
+        self.log_message("[Clickerbot] Iniciando configuração automática do navegador...")
+        # Dá 6 segundos para a janela abrir e carregar parcialmente
+        time.sleep(6.0)
+        
+        # Sequência de passos com timeouts personalizados
+        # Formato: (arquivo_imagem, nome_do_passo, eh_campo_amount, timeout_segundos)
+        steps = [
+            ("iniciar.png", "Iniciar", False, 15.0),
+            ("demo.png", "Demo", False, 10.0),
+            ("acumulators.png", "Acumulators", False, 15.0),  # Aumentado para 15s para aguardar carregamento da página
+            ("stake.png", "Stake", False, 2.0),
+            ("10.png", "10", False, 2.0),
+            ("rate.png", "Rate", False, 2.0),
+            ("5%.png", "5%", False, 4.0),
+            ("take.png", "Take", False, 2.0),
+            ("togle.png", "Togle", False, 2.0),
+            ("amount.png", "Amount", True, 4.0),
+            ("save.png", "Save", False, 4.0)
+        ]
+        
+        skip_accumulator_steps = False
+        skip_rate_steps = False
+        screen_width, screen_height = pyautogui.size()
+        # Região correspondente aos 65% direitos da tela (para evitar a janela do bot na extrema esquerda e cobrir dropdowns que abrem para a esquerda)
+        right_region = (int(screen_width * 0.35), 0, int(screen_width * 0.65), screen_height)
+        
+        rate_pos = None
+        take_pos = None
+        
+        for filename, name, is_amount, timeout in steps:
+            if not self.bot or not self.bot.running:
+                self.log_message("[Clickerbot] Configuração interrompida pois o robô foi parado.")
+                return
+                
+            # Se for para pular os passos de seleção do Accumulator
+            if skip_accumulator_steps and name in ["Acumulators", "Stake", "10"]:
+                self.log_message(f"[Clickerbot] Pulando passo '{name}' (Accumulator já ativo).")
+                continue
+                
+            # Se for para pular os passos de Growth Rate
+            if skip_rate_steps and name in ["Rate", "5%"]:
+                self.log_message(f"[Clickerbot] Pulando passo '{name}' (Growth rate já está em 5%).")
+                continue
+                
+            path = os.path.join("capturas", filename)
+            if not os.path.exists(path):
+                self.log_message(f"[Clickerbot] Erro: Imagem de referência '{path}' não encontrada.")
+                continue
+                
+            # Verifica se o Accumulator já está ativo (checando se Togle ou Amount já aparecem na tela)
+            if name == "Acumulators":
+                try:
+                    if (pyautogui.locateOnScreen(os.path.join("capturas", "togle.png"), region=right_region, confidence=0.8) is not None or
+                        pyautogui.locateOnScreen(os.path.join("capturas", "amount.png"), region=right_region, confidence=0.8) is not None):
+                        self.log_message("[Clickerbot] Painel do Accumulator já está ativo. Pulando passos de seleção do contrato.")
+                        skip_accumulator_steps = True
+                        continue
+                except Exception as e:
+                    self.log_message(f"[Clickerbot] Erro ao verificar painel do Accumulator: {e}")
+                
+            # Verifica se o Growth Rate já está em 5% antes de clicar em Rate (apenas na metade direita da tela)
+            if name == "Rate":
+                try:
+                    found_5 = False
+                    for img_name in ["5%ativ.png", "5%.png", "5%on.png"]:
+                        img_path = os.path.join("capturas", img_name)
+                        if os.path.exists(img_path):
+                            for conf in [0.85, 0.8, 0.75, 0.7]:
+                                if pyautogui.locateOnScreen(img_path, region=right_region, confidence=conf) is not None:
+                                    found_5 = True
+                                    break
+                            if found_5:
+                                break
+                    if found_5:
+                        self.log_message("[Clickerbot] Growth rate já está configurado como 5% no painel. Ignorando passos Rate e 5%.")
+                        skip_rate_steps = True
+                        continue
+                except Exception as e:
+                    self.log_message(f"[Clickerbot] Erro ao checar Growth rate: {e}")
+                    
+            self.log_message(f"[Clickerbot] Procurando por '{name}' na tela (timeout: {timeout}s)...")
+            
+            # Define a região de busca (metade direita para os passos internos da sidebar; tela inteira para Iniciar, Demo e Acumulators)
+            search_region = right_region if name not in ["Iniciar", "Demo", "Acumulators"] else None
+            
+            found = False
+            start_time = time.time()
+            clicked_fallback = False
+            while time.time() - start_time < timeout:
+                if not self.bot or not self.bot.running:
+                    return
+                try:
+                    pos = None
+                    # Tolerâncias decrescentes de confiança para busca robusta
+                    for conf in [0.85, 0.8, 0.75, 0.7, 0.65]:
+                        if search_region:
+                            pos = pyautogui.locateCenterOnScreen(path, region=search_region, confidence=conf)
+                        else:
+                            pos = pyautogui.locateCenterOnScreen(path, confidence=conf)
+                        if pos is not None:
+                            break
+                    
+                    # Se for a etapa de 5% e não encontramos por imagem, tentamos o fallback relativo ao Rate dropdown
+                    if name == "5%" and pos is None and not clicked_fallback and (time.time() - start_time > 1.0):
+                        self.log_message("[Clickerbot] Elemento 5% não encontrado por imagem. Tentando fallback de clique relativo ao Rate dropdown...")
+                        if rate_pos is None:
+                            for conf in [0.85, 0.8, 0.75, 0.7]:
+                                rate_pos = pyautogui.locateCenterOnScreen(os.path.join("capturas", "rate.png"), region=right_region, confidence=conf)
+                                if rate_pos is not None:
+                                    break
+                        if rate_pos is not None:
+                            pos = pyautogui.Point(rate_pos.x - 180, rate_pos.y + 160)
+                            clicked_fallback = True
+                            self.log_message(f"[Clickerbot] Utilizando fallback relativo ao Rate em {pos}.")
+                    
+                    # Se for a etapa de Amount e não encontramos por imagem, tentamos o fallback relativo ao Take profit header
+                    if name == "Amount" and pos is None and not clicked_fallback and (time.time() - start_time > 1.0):
+                        self.log_message("[Clickerbot] Elemento Amount não encontrado por imagem (possível erro vermelho). Tentando fallback relativo ao Take profit header...")
+                        if take_pos is None:
+                            for conf in [0.9, 0.85, 0.8]:
+                                take_pos = pyautogui.locateCenterOnScreen(os.path.join("capturas", "take.png"), region=right_region, confidence=conf)
+                                if take_pos is not None:
+                                    break
+                        if take_pos is not None:
+                            pos = pyautogui.Point(take_pos.x + 80, take_pos.y + 90)
+                            clicked_fallback = True
+                            self.log_message(f"[Clickerbot] Utilizando fallback relativo ao Take profit header em {pos}.")
+                            
+                    # Se for a etapa de Save e não encontramos por imagem (botão disabled), tentamos o fallback relativo ao Take profit header
+                    if name == "Save" and pos is None and not clicked_fallback and (time.time() - start_time > 1.0):
+                        self.log_message("[Clickerbot] Elemento Save não encontrado por imagem (possível botão desativado). Tentando fallback relativo ao Take profit header...")
+                        if take_pos is None:
+                            for conf in [0.9, 0.85, 0.8]:
+                                take_pos = pyautogui.locateCenterOnScreen(os.path.join("capturas", "take.png"), region=right_region, confidence=conf)
+                                if take_pos is not None:
+                                    break
+                        if take_pos is not None:
+                            pos = pyautogui.Point(take_pos.x + 80, take_pos.y + 185)
+                            clicked_fallback = True
+                            self.log_message(f"[Clickerbot] Utilizando fallback relativo ao Take profit header em {pos}.")
+                        
+                    if pos is not None:
+                        if is_amount:
+                            # Clica e dá double click para obter foco e selecionar texto
+                            pyautogui.click(pos)
+                            time.sleep(0.2)
+                            pyautogui.doubleClick(pos)
+                            time.sleep(0.3)
+                            # Limpa o campo
+                            for _ in range(5):
+                                pyautogui.press('backspace')
+                                time.sleep(0.05)
+                            for _ in range(5):
+                                pyautogui.press('delete')
+                                time.sleep(0.05)
+                            time.sleep(0.2)
+                            # Digita o valor
+                            pyautogui.write('1', interval=0.1)
+                            time.sleep(0.3)
+                            pyautogui.press('enter')
+                            time.sleep(0.2)
+                            self.log_message(f"[Clickerbot] Elemento '{name}' preenchido com '1' em {pos}.")
+                        else:
+                            # Clica no centro do elemento encontrado ou posição fallback
+                            pyautogui.click(pos)
+                            self.log_message(f"[Clickerbot] Elemento '{name}' clicado em {pos}.")
+                            
+                            if name == "Togle":
+                                self.log_message("[Clickerbot] Toggle ativado. Aguardando 2 segundos para focar e preencher Amount...")
+                                time.sleep(2.0)
+                                
+                                # Limpa o campo diretamente (já focado por padrão após ativar o toggle)
+                                for _ in range(5):
+                                    pyautogui.press('backspace')
+                                    time.sleep(0.05)
+                                for _ in range(5):
+                                    pyautogui.press('delete')
+                                    time.sleep(0.05)
+                                time.sleep(0.2)
+                                
+                                # Digita o valor 1 diretamente
+                                self.log_message("[Clickerbot] Digitando valor '1' sem clicar...")
+                                pyautogui.write('1', interval=0.1)
+                                time.sleep(0.5)
+                                
+                                # Coordenada do botão Save (relativo ao toggle pos)
+                                save_pos = pyautogui.Point(pos.x - 130, pos.y + 185)
+                                self.log_message(f"[Clickerbot] Clicando em Save em {save_pos}...")
+                                pyautogui.click(save_pos)
+                                time.sleep(0.5)
+                                
+                                # Como já realizamos Amount e Save, podemos encerrar o setup com sucesso!
+                                self.log_message("[Clickerbot] Configuração concluída com sucesso após o Toggle.")
+                                if self.bot:
+                                    self.bot.setup_in_progress = False
+                                return
+                        
+                        if name == "Rate":
+                            rate_pos = pos
+                            
+                        found = True
+                        time.sleep(1.2)  # pequeno delay para transição visual
+                        break
+                    
+                    # Fallback para abrir o dropdown se for a etapa de Acumulators e já passou 3.5 segundos
+                    if name == "Acumulators" and not clicked_fallback and (time.time() - start_time > 3.5):
+                        clicked_fallback = True
+                        self.log_message("[Clickerbot] Elemento Acumulators não detectado na tela inteira. Tentando abrir dropdown clicando acima de Stake...")
+                        try:
+                            stake_pos = None
+                            for conf in [0.85, 0.8, 0.75, 0.7]:
+                                stake_pos = pyautogui.locateCenterOnScreen(os.path.join("capturas", "stake.png"), region=right_region, confidence=conf)
+                                if stake_pos is not None:
+                                    break
+                            if stake_pos is not None:
+                                click_pos = (stake_pos.x, stake_pos.y - 65)
+                                pyautogui.click(click_pos)
+                                self.log_message(f"[Clickerbot] Clicado acima de Stake em {click_pos} para tentar abrir dropdown.")
+                        except Exception as e:
+                            self.log_message(f"[Clickerbot] Falha no clique de fallback acima de Stake: {e}")
+                            
+                except Exception:
+                    pass
+                time.sleep(0.4)
+                
+            if not found:
+                self.log_message(f"[Clickerbot] Elemento '{name}' não encontrado. Avançando para o próximo passo...")
+                
+        self.log_message("[Clickerbot] Sequência de configuração automática concluída!")
+        if self.bot:
+            self.bot.setup_in_progress = False
 
     def btn_stop_clicked(self):
         self.stop_reason = None
@@ -2439,6 +3318,10 @@ class AppGui(ctk.CTk):
         self.btn_stop.configure(state="disabled")
         self.lbl_next_click.configure(text="Inativo", text_color="gray")
         self._update_overlay_data()
+
+    def btn_panic_clicked(self):
+        self.log_message("🚨 BOTÃO DE PÂNICO ACIONADO! Parando o robô imediatamente...")
+        self.btn_stop_clicked()
 
     def bot_status_changed_external(self, running):
         # Chamado pelo bot_worker se ele parar sozinho ou devido a erro
@@ -2571,10 +3454,12 @@ class AppGui(ctk.CTk):
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8")
                 desc = json.loads(body).get("description", body) if body else str(e)
-                self.after(0, lambda: self._fetch_done_error(f"Erro {e.code}: {desc}"))
+                err_msg = f"Erro {e.code}: {desc}"
+                self.after(0, lambda msg=err_msg: self._fetch_done_error(msg))
                 return
             except Exception as exc:
-                self.after(0, lambda: self._fetch_done_error(str(exc)))
+                err_msg = str(exc)
+                self.after(0, lambda msg=err_msg: self._fetch_done_error(msg))
                 return
 
             results = data.get("result", [])
@@ -2671,6 +3556,7 @@ class AppGui(ctk.CTk):
         token = self.settings_entry_api_token.get().strip()
         app_id = self.settings_entry_api_appid.get().strip() or "1098"
         symbol = self.settings_combo_api_symbol.get()
+        account_type = self.settings_combo_api_account_type.get().strip().lower() if hasattr(self, "settings_combo_api_account_type") else "demo"
         
         if not token:
             self.lbl_api_status.configure(text="❌ Erro: Insira o Token de Acesso API.", text_color="#ef4444")
@@ -2681,7 +3567,7 @@ class AppGui(ctk.CTk):
         
         def run_test():
             from deriv_api_client import DerivApiClient
-            client = DerivApiClient(token=token, app_id=app_id, symbol=symbol)
+            client = DerivApiClient(token=token, app_id=app_id, symbol=symbol, account_type=account_type)
             
             auth_success = [False]
             error_msg = ["Tempo esgotado."]
@@ -2710,6 +3596,43 @@ class AppGui(ctk.CTk):
             self.after(0, lambda: self.btn_api_test.configure(state="normal"))
             
         threading.Thread(target=run_test, daemon=True).start()
+
+    def _on_ai_metrics_received(self, loss, accuracy, samples, device):
+        self.after(0, lambda: self._update_ai_metrics_ui(loss, accuracy, samples, device))
+
+    def _update_ai_metrics_ui(self, loss, accuracy, samples, device):
+        self.lbl_ai_loss.configure(text=f"{loss:.4f}")
+        self.lbl_ai_accuracy.configure(text=f"{accuracy:.1f}%")
+        self.lbl_ai_memory.configure(text=str(samples))
+        
+        if device == "GPU":
+            self.lbl_ai_engine.configure(text="GPU (PyTorch)", text_color=ACCENT_GREEN)
+            self.btn_install_torch.configure(text="GPU Ativa", state="disabled", fg_color="#10b981")
+        elif "PyTorch" in device or device == "cuda" or device == "cpu_pytorch":
+            self.lbl_ai_engine.configure(text="CPU (PyTorch)", text_color="#f59e0b")
+            self.btn_install_torch.configure(text="GPU Disponível", state="disabled", fg_color="#f59e0b")
+        else:
+            self.lbl_ai_engine.configure(text="CPU (NumPy)", text_color="#f59e0b")
+            self.btn_install_torch.configure(text="Instalar PyTorch (GPU)", state="normal", fg_color=ACCENT_BLUE)
+
+    def _install_torch_async(self):
+        self.btn_install_torch.configure(text="Instalando...", state="disabled")
+        self.log_message("[IA] Iniciando instalação do PyTorch em background com suporte a GPU/CUDA...")
+        
+        def run_install():
+            import subprocess
+            import sys
+            try:
+                # Instalação do PyTorch usando o executável python correto
+                cmd = [sys.executable, "-m", "pip", "install", "torch", "--index-url", "https://download.pytorch.org/whl/cu121"]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+                self.log_message("[IA] PyTorch instalado com sucesso! Por favor, reinicie o bot para ativar a aceleração por GPU.")
+                self.after(0, lambda: self.btn_install_torch.configure(text="Instalado!", fg_color="#10b981"))
+            except Exception as e:
+                self.log_message(f"[IA] Erro ao instalar PyTorch: {e}")
+                self.after(0, lambda: self.btn_install_torch.configure(text="Falhou!", state="normal", fg_color=ACCENT_RED))
+                
+        threading.Thread(target=run_install, daemon=True).start()
 
     # --- CALLBACKS DO TRABALHADOR ---
     def update_clicks_metric(self, click_count):
@@ -2956,6 +3879,7 @@ class AppGui(ctk.CTk):
         if not self.overlay or not self.overlay.winfo_exists():
             from floating_overlay import FloatingOverlay
             self.overlay = FloatingOverlay(self)
+            self.overlay.on_panic_cb = self.btn_panic_clicked
             self._update_overlay_data()
         
         if self.overlay.winfo_viewable():
@@ -3006,15 +3930,45 @@ class AppGui(ctk.CTk):
         adaptive_phase = getattr(self.bot, "adaptive_phase", "observation") if self.bot else "observation"
         adaptive_rule = "N/A"
         adaptive_conf = 0.0
-        if self.bot and hasattr(self.bot, "adaptive_strategy"):
+        ai_loss = 0.0
+        ai_accuracy = 0.0
+        ai_samples = 0
+        ai_device = "CPU (NumPy)"
+        if mode == "ai":
+            if self.bot:
+                samples_len = len(self.bot.ai_replay.memory) if hasattr(self.bot, "ai_replay") else 0
+                ai_samples = samples_len
+                min_samples = self.config.get("ai_min_samples_start", 500)
+                if samples_len < min_samples:
+                    adaptive_phase = f"Treinando ({samples_len}/{min_samples})"
+                else:
+                    adaptive_phase = "Operando"
+                
+                acc = self.bot.ai_replay.get_accuracy(self.bot.ai) if hasattr(self.bot, "ai_replay") else 0.0
+                adaptive_rule = f"Acurácia: {acc:.1f}%"
+                adaptive_conf = getattr(self.bot, "ai_prediction_confidence", 0.0) * 100.0
+                ai_loss = getattr(self.bot, "ai_loss", 0.0)
+                ai_accuracy = acc
+                
+                if hasattr(self.bot, "ai") and self.bot.ai:
+                    if getattr(self.bot.ai, "engine", "numpy") == "pytorch":
+                        if getattr(self.bot.ai, "device", "cpu") == "cuda":
+                            ai_device = "GPU"
+                        else:
+                            ai_device = "CPU (PyTorch)"
+                    else:
+                        ai_device = "CPU (NumPy)"
+        elif self.bot and hasattr(self.bot, "adaptive_strategy"):
             strat = getattr(self.bot, "adaptive_strategy", {})
             adaptive_rule = strat.get("text", "N/A")
             adaptive_conf = strat.get("confidence", 0.0)
 
         deriv_api_status = "Desconectado"
+        current_balance = 0.0
         if self.config.get("deriv_use_api_trading", False):
             if self.bot and getattr(self.bot, "api_client", None):
                 client = self.bot.api_client
+                current_balance = client.balance
                 if client.connected:
                     if client.authorized:
                         deriv_api_status = f"Autorizado ✅ (${client.balance:.2f})"
@@ -3026,6 +3980,51 @@ class AppGui(ctk.CTk):
                 deriv_api_status = "Desconectado"
         else:
             deriv_api_status = "Inativa (OCR)"
+
+        # Collect latency, market trend and contract mode details
+        latency_ms = 0
+        market_trend = "LATERAL ⚖️"
+        ai_reasoning_status = "Inativo"
+        ai_reasoning_explanation = "O robô não está ativo ou não iniciou a análise neural."
+        contract_mode = "accumulator"
+        predicted_barrier = None
+        last_digit = None
+        expiration_str = "N/A"
+        ai_intelligence_str = "Lvl 1 (Iniciando)"
+        
+        recent_ops = []
+        if self.bot:
+            recent_ops = getattr(self.bot, "recent_ops", [])
+            if getattr(self.bot, "api_client", None):
+                latency_ms = getattr(self.bot.api_client, "latency_ms", 0)
+            market_trend = getattr(self.bot, "market_trend", "LATERAL ⚖️")
+            ai_reasoning_status = getattr(self.bot, "ai_reasoning_status", "Inativo")
+            ai_reasoning_explanation = getattr(self.bot, "ai_reasoning_explanation", "Aguardando...")
+            contract_mode = self.bot.config.get("deriv_contract_mode", "accumulator")
+            predicted_barrier = getattr(self.bot, "predicted_barrier", None)
+            if hasattr(self.bot, "ai_tick_digits") and len(self.bot.ai_tick_digits) > 0:
+                last_digit = self.bot.ai_tick_digits[-1]
+                
+            if contract_mode in ["matches", "differs"]:
+                expiration_str = "1 Tick (Próximo)"
+            elif contract_mode == "rise_fall":
+                dur_val = getattr(self.bot, "last_dynamic_duration", None)
+                is_dynamic = True
+                if dur_val is None:
+                    dur_val = self.bot.config.get("deriv_rf_duration_value", 5)
+                    is_dynamic = False
+                dur_unit = self.bot.config.get("deriv_rf_duration_unit", "t")
+                unit_label = "Ticks" if dur_unit == "t" else ("Segs" if dur_unit == "s" else "Mins")
+                suffix = " ⚡" if is_dynamic else ""
+                expiration_str = f"{dur_val} {unit_label}{suffix}"
+            else:
+                expiration_str = "Dinâmico (Acu)"
+
+            # Calcula nível de aprendizado / QI
+            ai_training_iterations = getattr(self.bot, "ai_training_iterations", 0)
+            level = int(ai_training_iterations / 50) + 1
+            status_desc = "Básico 👶" if level < 5 else ("Médio 🧠" if level < 15 else ("Avançado 🚀" if level < 30 else "Cérebro 🌌"))
+            ai_intelligence_str = f"Lvl {level} ({status_desc})"
 
         self.overlay.update_data(
             status=status,
@@ -3045,7 +4044,22 @@ class AppGui(ctk.CTk):
             adaptive_phase=adaptive_phase,
             adaptive_rule=adaptive_rule,
             adaptive_conf=adaptive_conf,
-            deriv_api_status=deriv_api_status
+            deriv_api_status=deriv_api_status,
+            ai_loss=ai_loss,
+            ai_accuracy=ai_accuracy,
+            ai_samples=ai_samples,
+            current_balance=current_balance,
+            ai_device=ai_device,
+            latency_ms=latency_ms,
+            market_trend=market_trend,
+            ai_reasoning_status=ai_reasoning_status,
+            ai_reasoning_explanation=ai_reasoning_explanation,
+            contract_mode=contract_mode,
+            predicted_barrier=predicted_barrier,
+            last_digit=last_digit,
+            expiration_str=expiration_str,
+            ai_intelligence_str=ai_intelligence_str,
+            recent_ops=recent_ops
         )
 
     def _show_main_window(self):

@@ -14,9 +14,23 @@ import cv2
 import numpy as np
 import pyautogui
 import telegram_sender
+import ai_model
 
 # Evita travar o mouse caso ocorra algum loop infinito (arraste para o canto superior esquerdo para abortar)
 pyautogui.FAILSAFE = True
+
+def one_hot_encode_digits(digits, num_classes=10):
+    encoded = []
+    for d in digits:
+        vec = [0.0] * num_classes
+        try:
+            val = int(d)
+            if 0 <= val < num_classes:
+                vec[val] = 1.0
+        except ValueError:
+            pass
+        encoded.extend(vec)
+    return encoded
 
 class BotWorker(threading.Thread):
     def __init__(self, config, on_click_cb, on_win_cb, on_loss_cb, on_log_cb, on_status_cb, on_next_time_cb, on_stop_limit_cb, on_start_execution_cb=None, on_finance_cb=None):
@@ -78,6 +92,46 @@ class BotWorker(threading.Thread):
         }
         self.adaptive_event_count_since_relearn = 0
         self.adaptive_loss_count_since_relearn = 0
+        self.setup_in_progress = False
+        
+        # --- ATRIBUTOS DO MODO IA ---
+        self.ai = ai_model.TradingAI(
+            use_gpu=self.config.get("ai_use_gpu", True),
+            lr=self.config.get("ai_learning_rate", 0.01)
+        )
+        self.ai.load_weights()  # carrega pesos salvos se existirem
+        self.ai_replay = ai_model.ExperienceReplay(max_size=5000)
+        
+        self.digit_ai = ai_model.DigitAI(
+            use_gpu=self.config.get("ai_use_gpu", True),
+            lr=self.config.get("ai_learning_rate", 0.01)
+        )
+        self.digit_ai.load_weights()
+        self.ai_digit_replay = ai_model.DigitExperienceReplay(max_size=5000)
+        self.ai_training_iterations = 0
+        self.martingale_level = 0
+        self.last_dynamic_duration = None
+        
+        self.ai_tick_prices = []
+        self.ai_tick_digits = []
+        self.ai_tick_history_max = 500
+        self.ai_observations = []
+        self.ai_digit_observations = []
+        self.ai_current_tick_index = 0
+        self.ai_last_crash_index = 0
+        self.on_ai_metrics_cb = None
+        self.ai_prediction_confidence = 0.0
+        self.ai_loss = 0.0
+        self.ai_accuracy = 0.0
+        self.ai_survival_lengths = [10] * 10
+        self.market_trend = "LATERAL ⚖️"
+        # Controlo de entrada do Modo IA
+        self.ai_entry_cooldown_remaining = 0   # ticks restantes de cooldown pós-entrada
+        self.ai_active_contract = False         # True enquanto há contrato aberto via API
+        self.ai_selling_contract_id = None      # ID do contrato sendo vendido para evitar repetição
+        self.ai_ticks_since_crash = 0           # ticks consecutivos sem crash desde o último
+        self.ai_reasoning_status = "Inativo"
+        self.ai_reasoning_explanation = "Aguardando inicialização do robô..."
         
         # Cria as pastas de historico se nao existirem
         os.makedirs("capturas/historico", exist_ok=True)
@@ -85,6 +139,23 @@ class BotWorker(threading.Thread):
         
         self.sounds = {}
         self._load_custom_sounds()
+        
+        # Inicializa cliente Llama para integracao local/remota
+        llama_provider = self.config.get("llama_provider", "ollama")
+        if llama_provider == "local":
+            from local_llama import LocalLlamaClient
+            self.llama = LocalLlamaClient(
+                model_name=self.config.get("llama_model", "Qwen/Qwen2.5-0.5B-Instruct"),
+                enabled=self.config.get("llama_enabled", False)
+            )
+        else:
+            from llama_client import LlamaClient
+            self.llama = LlamaClient(
+                url=self.config.get("llama_url", "http://localhost:11434/api/generate"),
+                model=self.config.get("llama_model", "llama3"),
+                enabled=self.config.get("llama_enabled", False)
+            )
+        self.recent_ops = []
         
     def _load_custom_sounds(self):
         try:
@@ -244,6 +315,7 @@ class BotWorker(threading.Thread):
         self.in_cycle_cooldown = False
         self.cycle_cooldown_end_time = 0.0
         
+        self.ai_selling_contract_id = None
         self.adaptive_sequence = []
         self.adaptive_phase = "observation"
         self.adaptive_observation_start_time = time.time()
@@ -259,17 +331,19 @@ class BotWorker(threading.Thread):
             self.log("Iniciando conexão com a API da Deriv...")
             symbol = self.config.get("deriv_symbol", "R_100")
             growth_rate = self.config.get("deriv_growth_rate", 0.01)
-            app_id = self.config.get("deriv_app_id", "1098")
+            app_id = str(self.config.get("deriv_app_id", "1098")).strip() or "1098"
             
             from deriv_api_client import DerivApiClient
             self.api_client = DerivApiClient(
                 token=token,
                 app_id=app_id,
                 symbol=symbol,
-                growth_rate=growth_rate
+                growth_rate=growth_rate,
+                account_type=self.config.get("deriv_account_type", "demo")
             )
             self.api_client.on_tick_cb = self._on_api_tick
             self.api_client.on_contract_status_cb = self._on_api_contract_status
+            self.api_client.on_contract_update_cb = self._on_api_contract_update
             self.api_client.on_history_cb = self._on_api_history
             self.api_client.on_log_cb = self.log
             self.api_client.on_connection_change_cb = self._on_api_connection_change
@@ -341,6 +415,8 @@ class BotWorker(threading.Thread):
             self.on_status_cb(False)
 
     def _wait_if_in_cycle_cooldown(self):
+        if self.config.get("mode") == "ai":
+            return
         if not self.config.get("cycle_enabled", False):
             return
             
@@ -392,6 +468,10 @@ class BotWorker(threading.Thread):
         telegram_sender.send_telegram_msg(self.config, resume_msg, self.log)
 
     def run(self):
+        # Se a configuração automatizada do clickerbot estiver em andamento, aguarda sua conclusão
+        while self.setup_in_progress and self.running:
+            time.sleep(0.5)
+
         # Se agendamento estiver ativo, espera o horário alvo
         if self.config.get("schedule_enabled", False):
             date_str = self.config.get("schedule_date", "")
@@ -457,6 +537,8 @@ class BotWorker(threading.Thread):
                 self._run_linered_mode()
             elif mode == "adaptive":
                 self._run_adaptive_mode()
+            elif mode == "ai":
+                self._run_ai_mode()
         except Exception as e:
             self.log(f"Erro de execucao do bot: {e}")
             self.stop_bot()
@@ -850,6 +932,528 @@ class BotWorker(threading.Thread):
                 
             time.sleep(0.3)
 
+    def _process_ai_tick(self, price, is_crash):
+        self.ai_current_tick_index += 1
+
+        # Atualiza contador de ticks seguros sem crash
+        if is_crash:
+            # Calcula a duração do run antes de resetar a referência
+            run_length = self.ai_current_tick_index - self.ai_last_crash_index
+            self.ai_survival_lengths.append(run_length)
+            if len(self.ai_survival_lengths) > 10:
+                self.ai_survival_lengths.pop(0)
+            self.ai_last_crash_index = self.ai_current_tick_index
+            self.ai_ticks_since_crash = 0
+            # Se há contrato ativo e houve crash, o contrato foi perdido — API notificará via _on_api_contract_status
+            # Reseta o cooldown de entrada em crash (começa contagem de segurança do zero)
+            self.ai_entry_cooldown_remaining = 0
+        else:
+            self.ai_ticks_since_crash += 1
+            # Decrementa cooldown pós-entrada
+            if self.ai_entry_cooldown_remaining > 0:
+                self.ai_entry_cooldown_remaining -= 1
+
+        self.ai_tick_prices.append(price)
+        if len(self.ai_tick_prices) > self.ai_tick_history_max:
+            self.ai_tick_prices.pop(0)
+
+        # Extrai o último dígito do preço
+        price_str = str(price)
+        last_digit = 0
+        for char in reversed(price_str):
+            if char.isdigit():
+                last_digit = int(char)
+                break
+        self.ai_tick_digits.append(last_digit)
+        if len(self.ai_tick_digits) > 50:
+            self.ai_tick_digits.pop(0)
+
+        # Features para o DigitAI (últimos 15 dígitos com one-hot encoding)
+        if len(self.ai_tick_digits) >= 15:
+            digit_features_raw = self.ai_tick_digits[-15:]
+        else:
+            first_val = self.ai_tick_digits[0] if len(self.ai_tick_digits) > 0 else 0
+            digit_features_raw = [first_val] * (15 - len(self.ai_tick_digits)) + list(self.ai_tick_digits)
+        digit_features = one_hot_encode_digits(digit_features_raw)
+
+        # Calculate market trend based on SMA of recent prices
+        if len(self.ai_tick_prices) >= 20:
+            recent = self.ai_tick_prices[-8:]
+            older = self.ai_tick_prices[-20:-8]
+            avg_recent = sum(recent) / len(recent)
+            avg_older = sum(older) / len(older)
+            diff = avg_recent - avg_older
+            trend_threshold = price * 0.00002
+            if diff > trend_threshold:
+                self.market_trend = "ALTA 🐂"
+            elif diff < -trend_threshold:
+                self.market_trend = "BAIXA 🐻"
+            else:
+                self.market_trend = "LATERAL ⚖️"
+        else:
+            self.market_trend = "LATERAL ⚖️"
+
+        # Média Móvel Rápida e Lenta para Veto de Tendência
+        if len(self.ai_tick_prices) >= 30:
+            self.sma_10 = sum(self.ai_tick_prices[-10:]) / 10.0
+            self.sma_30 = sum(self.ai_tick_prices[-30:]) / 30.0
+        else:
+            self.sma_10 = None
+            self.sma_30 = None
+
+        # Extrai features específicas do Accumulator (20 features)
+        features = ai_model.extract_accumulator_features(
+            self.ai_tick_prices, self.ai_last_crash_index, self.ai_current_tick_index, self.ai_survival_lengths
+        )
+
+        contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+
+        # Cria registro de observação pendente de rotulação para a IA principal
+        obs = {
+            "index": self.ai_current_tick_index,
+            "features": features,
+            "price": price,
+            "is_crash": is_crash,
+            "timestamp": time.time(),
+            "label": None
+        }
+        self.ai_observations.append(obs)
+
+        # Rotulagem retroativa da IA principal: se passaram K ticks (padrão 3)
+        K = self.config.get("ai_lookahead_ticks", 3)
+        if contract_mode == "rise_fall":
+            dur_val = self.config.get("deriv_rf_duration_value", 5)
+            dur_unit = self.config.get("deriv_rf_duration_unit", "t")
+            if dur_unit == "t":
+                K = int(dur_val)
+                
+        for old_obs in self.ai_observations:
+            if old_obs["label"] is None:
+                if self.ai_current_tick_index - old_obs["index"] >= K:
+                    if contract_mode == "accumulator":
+                        crashed_in_interval = False
+                        for check_obs in self.ai_observations:
+                            if old_obs["index"] < check_obs["index"] <= self.ai_current_tick_index:
+                                if check_obs["is_crash"]:
+                                    crashed_in_interval = True
+                                    break
+                        label = 0 if crashed_in_interval else 1
+                    else:  # rise_fall
+                        future_price = price
+                        for check_obs in self.ai_observations:
+                            if check_obs["index"] == old_obs["index"] + K:
+                                future_price = check_obs["price"]
+                                break
+                        label = 1 if future_price > old_obs["price"] else 0
+                        
+                    self.ai_replay.add(old_obs["features"], label)
+                    old_obs["label"] = label
+
+        # Limpa observações já rotuladas e antigas
+        self.ai_observations = [o for o in self.ai_observations if o["label"] is None or self.ai_current_tick_index - o["index"] < 50]
+
+        # Registro e Rotulagem retroativa do DigitAI (1 tick lookahead)
+        digit_obs = {
+            "index": self.ai_current_tick_index,
+            "features": digit_features,
+            "label": None
+        }
+        self.ai_digit_observations.append(digit_obs)
+
+        for old_digit_obs in self.ai_digit_observations:
+            if old_digit_obs["label"] is None:
+                if self.ai_current_tick_index == old_digit_obs["index"] + 1:
+                    self.ai_digit_replay.add(old_digit_obs["features"], last_digit)
+                    old_digit_obs["label"] = last_digit
+
+        self.ai_digit_observations = [o for o in self.ai_digit_observations if o["label"] is None or self.ai_current_tick_index - o["index"] < 50]
+
+        # Treinamento periódico online (a cada 10 ticks)
+        if self.ai_current_tick_index % 10 == 0:
+            # Treina IA principal
+            if len(self.ai_replay.memory) >= 32:
+                # Executa 5 passos de treino para acelerar o aprendizado online
+                for _ in range(5):
+                    X_batch, y_batch = self.ai_replay.sample_batch(32)
+                    loss_val = self.ai.train_on_batch(X_batch, y_batch)
+                    self.ai_training_iterations += 1
+                self.ai_loss = loss_val
+                acc = self.ai_replay.get_accuracy(self.ai)
+                self.ai_accuracy = acc
+                if self.ai_current_tick_index % 100 == 0:
+                    self.ai.save_weights(filepath=f"capturas/ai_weights_{contract_mode}.json")
+            
+            # Treina DigitAI
+            if len(self.ai_digit_replay.memory) >= 32:
+                # Executa 5 passos de treino
+                for _ in range(5):
+                    X_digit_batch, y_digit_batch = self.ai_digit_replay.sample_batch(32)
+                    digit_loss = self.digit_ai.train_on_batch(np.array(X_digit_batch, dtype=np.float32), np.array(y_digit_batch, dtype=np.int64))
+                    self.ai_training_iterations += 1
+                if self.ai_current_tick_index % 100 == 0:
+                    self.digit_ai.save_weights()
+
+            # Se o modo for matches/differs, atualiza as métricas da GUI com os dados da rede de dígitos
+            if contract_mode in ["matches", "differs"]:
+                acc = self.ai_digit_replay.get_accuracy(self.digit_ai)
+                self.ai_accuracy = acc
+                if len(self.ai_digit_replay.memory) >= 32:
+                    self.ai_loss = digit_loss
+
+            # Atualiza métricas na GUI se callback estiver registrado
+            if self.on_ai_metrics_cb:
+                device_status = "GPU" if self.ai.device == "cuda" else "CPU"
+                samples_count = len(self.ai_digit_replay.memory) if contract_mode in ["matches", "differs"] else len(self.ai_replay.memory)
+                self.on_ai_metrics_cb(self.ai_loss, self.ai_accuracy, samples_count, device_status)
+
+        # Prevê a probabilidade do tick atual ser seguro
+        self.ai_digit_vetoed = False
+        if contract_mode in ["matches", "differs"]:
+            digit_probs = self.digit_ai.predict(digit_features)
+            if contract_mode == "matches":
+                best_digit = int(np.argmax(digit_probs))
+                raw_prob = float(digit_probs[best_digit])
+                # Calibragem: 10% (aleatório) = 0% confiança; 100% (certo) = 100% confiança
+                self.ai_prediction_confidence = max(0.0, (raw_prob - 0.10) / 0.90)
+                self.predicted_barrier = best_digit
+            else:  # differs
+                best_digit = int(np.argmin(digit_probs))
+                raw_prob = float(digit_probs[best_digit])
+                # Calibragem: 10% (aleatório) = 0% confiança; 0% (impossível) = 100% confiança
+                conf = max(0.0, (0.10 - raw_prob) / 0.10)
+                
+                # Filtro de Segurança Estatístico (Veto micro-trend):
+                # Se o dígito escolhido para Differs saiu nos últimos 3 ticks, vetamos para evitar hot streaks (rachas)
+                recent_ticks = list(self.ai_tick_digits[-3:]) if len(self.ai_tick_digits) >= 3 else list(self.ai_tick_digits)
+                if best_digit in recent_ticks:
+                    conf = 0.0
+                    self.ai_digit_vetoed = True
+                    
+                self.ai_prediction_confidence = conf
+                self.predicted_barrier = best_digit
+        else:
+            self.ai_prediction_confidence = self.ai.predict(features)
+
+        # ─── DECISÃO DE ENTRADA (somente no Modo IA, com API e contrato livre) ───
+        if self.config.get("mode") != "ai":
+            self.ai_reasoning_status = "Inativo"
+            self.ai_reasoning_explanation = "O robô não está no Modo IA. Ative o modo 'IA Neural' nas configurações principais para iniciar a análise."
+            return
+        if not (self.api_client and self.api_client.connected and self.api_client.authorized):
+            self.ai_reasoning_status = "Aguardando Conexão"
+            self.ai_reasoning_explanation = "A API da Deriv não está conectada ou autorizada. Por favor, conecte a sua conta para permitir que o robô faça operações."
+            return
+            
+        contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+        if contract_mode == "accumulator" and is_crash:
+            self.ai_reasoning_status = "Bloqueado (Crash)"
+            self.ai_reasoning_explanation = "Um crash de ticks foi detectado no mercado. Entrada bloqueada para evitar prejuízos."
+            return
+
+        threshold = self.config.get("ai_threshold", 75.0) / 100.0
+        min_safe  = self.config.get("ai_min_ticks_safe", 5)
+        cooldown  = self.config.get("ai_entry_cooldown", 10)
+        
+        if self.ai_active_contract:
+            self.ai_reasoning_status = "Contrato Ativo"
+            self.ai_reasoning_explanation = f"Existe um contrato {contract_mode.upper()} em andamento. Monitorando o mercado para ver se a operação é finalizada com lucro."
+            return
+            
+        if self.ai_entry_cooldown_remaining > 0:
+            self.ai_reasoning_status = "Cooldown Ativo"
+            self.ai_reasoning_explanation = f"Aguardando a estabilização do preço após a última entrada.\nTempo de cooldown restante: {self.ai_entry_cooldown_remaining} ticks."
+            return
+
+        # Precisa de amostras suficientes para confiar na IA
+        min_samples = self.config.get("ai_min_samples_start", 500)
+        samples_len = len(self.ai_digit_replay.memory) if contract_mode in ["matches", "differs"] else len(self.ai_replay.memory)
+        if samples_len < min_samples:
+            self.ai_reasoning_status = "Coletando Dados"
+            self.ai_reasoning_explanation = f"Coletando amostras de ticks para alimentar o buffer de treinamento da rede neural.\nProgresso: {samples_len} / {min_samples} ticks analisados."
+            return
+
+        # Análise neural
+        ready = False
+        if contract_mode == "accumulator":
+            if self.ai_ticks_since_crash < min_safe:
+                self.ai_reasoning_status = "Aguardando Margem"
+                self.ai_reasoning_explanation = f"O mercado acabou de sofrer um crash. Aguardando margem de segurança de ticks mínimos pós-crash.\nFalta: {min_safe - self.ai_ticks_since_crash} ticks de estabilização."
+            elif self.ai_prediction_confidence < threshold:
+                self.ai_reasoning_status = "Aguardando Gatilho"
+                self.ai_reasoning_explanation = (
+                    f"A rede neural considerou a probabilidade de sobrevivência abaixo do limite de segurança.\n"
+                    f"Confiança Atual: {self.ai_prediction_confidence*100:.1f}%\n"
+                    f"Limiar Exigido: {threshold*100:.1f}%\n\n"
+                    f"💡 DICA: Como a rede neural ainda está em fase de aprendizado online, suas previsões tendem a ficar próximas de 50%. "
+                    f"Para forçar mais entradas durante o treino, tente diminuir o 'Limiar de Confiança da IA' nas configurações para 60% ou 55%."
+                )
+            else:
+                ready = True
+        elif contract_mode in ["matches", "differs"]:
+            if getattr(self, "ai_digit_vetoed", False):
+                self.ai_reasoning_status = "Veto Estatístico 🛑"
+                self.ai_reasoning_explanation = (
+                    f"Entrada bloqueada por segurança estatística contra rachas.\n"
+                    f"Dígito Alvo: {getattr(self, 'predicted_barrier', 0)}\n"
+                    f"Motivo: O dígito {getattr(self, 'predicted_barrier', 0)} saiu nos últimos 3 ticks. Evitando hot streaks."
+                )
+            elif self.ai_prediction_confidence < threshold:
+                self.ai_reasoning_status = "Aguardando Gatilho"
+                if contract_mode == "differs":
+                    raw_prob_val = 0.10 * (1.0 - self.ai_prediction_confidence)
+                    prob_desc = f"Probabilidade prevista: {raw_prob_val*100:.1f}%"
+                else:
+                    raw_prob_val = 0.10 + 0.90 * self.ai_prediction_confidence
+                    prob_desc = f"Probabilidade prevista: {raw_prob_val*100:.1f}%"
+                
+                self.ai_reasoning_explanation = (
+                    f"A rede neural considerou a confiança na previsão de dígitos abaixo do limite.\n"
+                    f"Dígito Alvo: {getattr(self, 'predicted_barrier', 0)} ({prob_desc})\n"
+                    f"Confiança Atual: {self.ai_prediction_confidence*100:.1f}%\n"
+                    f"Limiar Exigido: {threshold*100:.1f}%"
+                )
+            else:
+                ready = True
+        else:  # rise_fall
+            is_strong_call = self.ai_prediction_confidence >= threshold
+            is_strong_put = self.ai_prediction_confidence <= (1.0 - threshold)
+            
+            # --- FILTRO 1: SMA TREND VETO ---
+            self.ai_trend_vetoed = False
+            if (is_strong_call or is_strong_put) and getattr(self, "sma_10", None) is not None and getattr(self, "sma_30", None) is not None:
+                if is_strong_call and (self.sma_10 < self.sma_30):
+                    # Permite apenas se a confiança for ultra-forte
+                    if self.ai_prediction_confidence < min(0.95, threshold + 0.15):
+                        self.ai_reasoning_status = "Veto de Tendência 🛑"
+                        self.ai_reasoning_explanation = (
+                            f"Operação CALL (Alta) bloqueada por segurança.\n"
+                            f"A tendência macro é de BAIXA (Média Rápida {self.sma_10:.5f} < Lenta {self.sma_30:.5f}).\n"
+                            f"Confiança: {self.ai_prediction_confidence*100:.1f}% (Necessário {min(0.95, threshold + 0.15)*100:.0f}% para contra-tendência)"
+                        )
+                        self.ai_trend_vetoed = True
+                elif is_strong_put and (self.sma_10 > self.sma_30):
+                    # Permite apenas se a confiança for ultra-forte
+                    if self.ai_prediction_confidence > max(0.05, (1.0 - threshold) - 0.15):
+                        self.ai_reasoning_status = "Veto de Tendência 🛑"
+                        self.ai_reasoning_explanation = (
+                            f"Operação PUT (Baixa) bloqueada por segurança.\n"
+                            f"A tendência macro é de ALTA (Média Rápida {self.sma_10:.5f} > Lenta {self.sma_30:.5f}).\n"
+                            f"Confiança: {(1.0 - self.ai_prediction_confidence)*100:.1f}% (Necessário {min(0.95, threshold + 0.15)*100:.0f}% para contra-tendência)"
+                        )
+                        self.ai_trend_vetoed = True
+
+            # --- FILTRO 3: SMART CONFIDENCE MARTINGALE VETO ---
+            self.ai_martingale_vetoed = False
+            if (is_strong_call or is_strong_put) and not self.ai_trend_vetoed:
+                if getattr(self, "martingale_level", 0) > 0:
+                    martingale_threshold = max(0.70, threshold + 0.10)
+                    current_conf = self.ai_prediction_confidence if is_strong_call else (1.0 - self.ai_prediction_confidence)
+                    if current_conf < martingale_threshold:
+                        self.ai_reasoning_status = "Martingale Veto 🛑"
+                        self.ai_reasoning_explanation = (
+                            f"Recuperação Martingale pausada (Nível {self.martingale_level}).\n"
+                            f"Aguardando sinal com maior confiança para proteger a banca.\n"
+                            f"Confiança Atual: {current_conf*100:.1f}% | Exigido para Martingale: {martingale_threshold*100:.0f}%"
+                        )
+                        self.ai_martingale_vetoed = True
+
+            if not (is_strong_call or is_strong_put):
+                self.ai_reasoning_status = "Mercado Indeciso"
+                self.ai_reasoning_explanation = (
+                    f"Rede neural indicou mercado sem tendência de direção clara (lateralizado).\n"
+                    f"Confiança para Alta (CALL): {self.ai_prediction_confidence*100:.1f}%\n"
+                    f"Confiança para Baixa (PUT): {(1.0 - self.ai_prediction_confidence)*100:.1f}%\n"
+                    f"Limiar Exigido: {threshold*100:.1f}%\n\n"
+                    f"💡 DICA: No início do treinamento, a rede neural se mantém neutra (próxima de 50%). "
+                    f"Você pode diminuir o 'Limiar de Confiança da IA' nas configurações principais (ex: para 60% ou 55%) "
+                    f"para tornar a tomada de decisão mais sensível e permitir mais entradas."
+                )
+            elif not self.ai_trend_vetoed and not self.ai_martingale_vetoed:
+                ready = True
+
+        if ready:
+            self.ai_active_contract = True
+            self.ai_entry_cooldown_remaining = cooldown
+            threading.Thread(
+                target=self._query_llama_and_trade,
+                args=(contract_mode, threshold, cooldown, self.ai_prediction_confidence),
+                daemon=True
+            ).start()
+
+    def _query_llama_and_trade(self, contract_mode, threshold, cooldown, confidence):
+        try:
+            direction = None
+            duration = None
+            duration_unit = None
+            llama_veto = False
+            
+            # Se Llama estiver habilitado, consulta o Llama
+            if self.llama.enabled:
+                self.log("🤖 [Modo IA] Consultando Llama para avaliacao de entrada...")
+                self.ai_reasoning_status = "Consultando Llama"
+                llama_model_name = getattr(self.llama, "model_name", getattr(self.llama, "model", "Llama"))
+                self.ai_reasoning_explanation = f"Rede neural confirmou o padrão de entrada. Consultando o modelo Llama ({llama_model_name}) para validação macro..."
+                winrate = (self.win_count / (self.win_count + self.loss_count) * 100.0) if (self.win_count + self.loss_count) > 0 else 0.0
+                decision = self.llama.get_decision(
+                    mode=contract_mode,
+                    tick_history=self.ai_tick_digits if contract_mode in ["matches", "differs"] else self.ai_tick_prices,
+                    current_profit=self.current_profit,
+                    winrate=winrate,
+                    recent_ops=self.recent_ops
+                )
+                if decision:
+                    if contract_mode in ["accumulator", "matches", "differs"]:
+                        if not decision.get("is_safe", False):
+                            self.log("🤖 [Llama] Operacao vetada por motivos de seguranca.")
+                            self.ai_reasoning_status = "Veto do Llama 🚫"
+                            self.ai_reasoning_explanation = f"A rede neural indicou entrada, mas o modelo Llama ({llama_model_name}) vetou a operação considerando alto risco macro."
+                            llama_veto = True
+                    else:  # rise_fall
+                        direction = decision.get("direction")
+                        duration = decision.get("duration")
+                        duration_unit = decision.get("duration_unit")
+                        llama_conf = decision.get("confidence", 0.0)
+                        self.log(f"🤖 [Llama] Decisao: {str(direction).upper()} | Duracao: {duration}{duration_unit} | Confianca: {llama_conf}%")
+            
+            if llama_veto:
+                self.ai_active_contract = False
+                return
+ 
+            # Fallback para definicao de direcao no modo rise_fall se o Llama nao respondeu ou esta desligado
+            if contract_mode == "rise_fall" and not direction:
+                if confidence >= threshold:
+                    direction = "rise"
+                elif confidence <= (1.0 - threshold):
+                    direction = "fall"
+                else:
+                    # Fallback via EMA de curtissimo prazo
+                    if len(self.ai_tick_prices) >= 8:
+                        recent = self.ai_tick_prices[-3:]
+                        older = self.ai_tick_prices[-8:-3]
+                        ema_fast = sum(recent) / len(recent)
+                        ema_slow = sum(older) / len(older)
+                        direction = "rise" if ema_fast >= ema_slow else "fall"
+                    else:
+                        direction = "rise"
+            
+            samples_count = len(self.ai_digit_replay.memory) if contract_mode in ["matches", "differs"] else len(self.ai_replay.memory)
+            self.log(
+                f"🎯 [Modo IA] ENTRADA ({contract_mode.upper()})! "
+                f"Confianca Neural={confidence*100:.1f}% "
+                f"(Threshold: {threshold*100:.0f}%) | Amostras={samples_count}"
+            )
+            self.ai_reasoning_status = "Entrada Confirmada 🚀"
+            if contract_mode == "rise_fall":
+                self.ai_reasoning_explanation = f"Padrão confirmado! Solicitando entrada Rise/Fall via API:\nDireção: {str(direction).upper()}\nDuração: {duration or 5}{duration_unit or 't'}\nConfiança Neural: {confidence*100:.1f}%"
+            elif contract_mode in ["matches", "differs"]:
+                barrier = getattr(self, "predicted_barrier", 0)
+                self.ai_reasoning_explanation = f"Padrão confirmado em {contract_mode.upper()}! Solicitando entrada via API.\nDígito Previsto: {barrier}\nConfiança Neural: {confidence*100:.1f}%"
+            else:
+                self.ai_reasoning_explanation = f"Padrão de segurança confirmado no Accumulator! Solicitando compra via API.\nConfiança Neural: {confidence*100:.1f}%"
+ 
+            self._attempt_click(direction=direction, duration=duration, duration_unit=duration_unit)
+        except Exception as e:
+            self.log(f"❌ [Modo IA] Erro ao processar entrada/Llama: {e}")
+            self.ai_active_contract = False
+            self.ai_reasoning_status = "Erro na Entrada"
+            self.log(f"❌ [Modo IA] Erro ao processar entrada/Llama: {e}")
+            self.ai_active_contract = False
+            self.ai_reasoning_status = "Erro na Entrada"
+            self.ai_reasoning_explanation = f"Ocorreu um erro ao processar a entrada: {e}"
+
+
+
+    def _run_ai_mode(self):
+        """
+        Modo IA puro — 100% orientado a dados da API Deriv em tempo real.
+        Sem captura de tela. Ticks vêm de _on_api_tick via WebSocket.
+        A lógica de entrada também está em _on_api_tick para reação imediata.
+        """
+        # Verifica se a API está configurada — obrigatório neste modo
+        token = self.config.get("deriv_api_token", "").strip()
+        if not token:
+            self.log("❌ [Modo IA] Token de API não configurado! Configure o Token PAT e o App ID em Configurações Avançadas.")
+            self.stop_bot()
+            return
+
+        # Aguarda a API conectar e carregar parâmetros da barreira (máx 15 s)
+        self.log("🧠 [Modo IA] Aguardando conexão e parâmetros de barreira da API Deriv...")
+        waited = 0
+        while self.running and waited < 15:
+            if self.api_client and self.api_client.authorized and self.api_client.barrier_distance is not None:
+                break
+            time.sleep(0.5)
+            waited += 0.5
+
+        if not self.running:
+            return
+
+        if not (self.api_client and self.api_client.authorized and self.api_client.barrier_distance is not None):
+            self.log("❌ [Modo IA] Não foi possível conectar ou obter parâmetros de barreira da API em 15 segundos. Verifique o token, App ID e o mercado.")
+            self.stop_bot()
+            return
+
+        self.log(f"✅ [Modo IA] API conectada! Conta: {self.config.get('deriv_account_type','demo').upper()} | Saldo: ${self.api_client.balance:.2f}")
+
+        # Solicita histórico para pré-alimentar e treinar a IA antes de operar
+        self.log("📊 [Modo IA] Solicitando histórico de ticks para pré-treinar a rede neural...")
+        self.api_client.request_ticks_history(1000)
+
+        # Carrega pesos específicos para o tipo de contrato ativo para evitar contaminação
+        contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+        if contract_mode not in ["matches", "differs"]:
+            weights_file = f"capturas/ai_weights_{contract_mode}.json"
+            self.log(f"🧠 [Modo IA] Carregando pesos específicos para {contract_mode.upper()} de '{weights_file}'...")
+            self.ai.load_weights(weights_file)
+
+        # Inicializa estado da IA
+        self.ai_ticks_since_crash = 0
+        self.ai_entry_cooldown_remaining = 0
+        self.ai_active_contract = False
+        self.ai_selling_contract_id = None
+
+        threshold = self.config.get("ai_threshold", 75.0)
+        min_safe = self.config.get("ai_min_ticks_safe", 5)
+        cooldown = self.config.get("ai_entry_cooldown", 10)
+
+        self.log(
+            f"🤖 [Modo IA] Parâmetros: Limiar={threshold:.0f}% | "
+            f"Ticks mín. seguros={min_safe} | Cooldown pós-entrada={cooldown} ticks"
+        )
+        self.log("⏳ [Modo IA] Coletando dados e treinando... Primeiras entradas após acumular amostras suficientes.")
+
+        # Contador para log periódico
+        last_status_log_tick = 0
+
+        # O loop principal apenas mantém o bot vivo. Todo processamento de ticks
+        # e tomada de decisão ocorre em _on_api_tick (chamado pelo WebSocket thread).
+        while self.running:
+            self._wait_if_in_cycle_cooldown()
+            if not self.running:
+                break
+
+            # Verifica se a API ainda está conectada
+            if not (self.api_client and self.api_client.connected):
+                self.log("⚠️ [Modo IA] Conexão com a API perdida. Aguardando reconexão...")
+                time.sleep(2)
+                continue
+
+            # Log de status periódico (a cada ~60 s)
+            if self.ai_current_tick_index - last_status_log_tick >= 120:
+                last_status_log_tick = self.ai_current_tick_index
+                self.log(
+                    f"📈 [Modo IA Status] Tick #{self.ai_current_tick_index} | "
+                    f"Amostras: {len(self.ai_replay.memory)} | "
+                    f"Acurácia: {self.ai_accuracy:.1f}% | "
+                    f"Loss: {self.ai_loss:.4f} | "
+                    f"Ticks s/ crash: {self.ai_ticks_since_crash} | "
+                    f"Contrato ativo: {'Sim' if self.ai_active_contract else 'Não'} | "
+                    f"Cooldown: {self.ai_entry_cooldown_remaining} ticks"
+                )
+
+            time.sleep(0.5)
+
+
     def _trigger_relearn_if_needed(self):
         now = time.time()
         elapsed_relearn = now - self.adaptive_relearn_start_time
@@ -988,14 +1592,75 @@ class BotWorker(threading.Thread):
         except Exception as e:
             self.log(f"Erro ao salvar adaptive_session.json: {e}")
 
-    def _attempt_click(self):
+    def _attempt_click(self, direction=None, duration=None, duration_unit=None):
         # --- EXECUÇÃO VIA API DA DERIV ---
         use_api_trading = self.config.get("deriv_use_api_trading", False)
         
         if use_api_trading and self.api_client and self.api_client.connected and self.api_client.authorized:
-            stake = self.config.get("win_value", 1.50)
-            self.log(f"[API] Enviando ordem de compra via API (Stake: ${stake:.2f})")
-            success = self.api_client.buy_accumulator(stake)
+            base_stake = self.config.get("win_value", 1.50)
+            contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+            
+            # --- MARTINGALE INTELIGENTE (APLICAÇÃO) ---
+            if getattr(self, "martingale_level", 0) > 0 and contract_mode == "rise_fall":
+                stake = base_stake * (2.0 ** self.martingale_level)
+                self.log(f"🔥 [Martingale] Aplicando stake recuperado (Nível {self.martingale_level}): ${stake:.2f}")
+            else:
+                stake = base_stake
+            
+            if contract_mode == "accumulator":
+                self.api_client.growth_rate = float(self.config.get("deriv_growth_rate", 0.01))
+                self.log(f"[API] Enviando ordem de compra Accumulator (Stake: ${stake:.2f})")
+                success = self.api_client.buy_accumulator(stake)
+            elif contract_mode in ["matches", "differs"]:
+                barrier = getattr(self, "predicted_barrier", 0)
+                contract_type = "DIGITMATCH" if contract_mode == "matches" else "DIGITDIFF"
+                self.log(f"[API] Enviando ordem {contract_mode.upper()} -> Dígito previsto: {barrier} | Stake: ${stake:.2f}")
+                success = self.api_client.buy_digits(stake, contract_type, barrier)
+            else:  # rise_fall
+                if not direction:
+                    # Direção padrão baseada em EMAs das features/preços
+                    if len(self.ai_tick_prices) >= 8:
+                        recent = self.ai_tick_prices[-3:]
+                        older = self.ai_tick_prices[-8:-3]
+                        ema_fast = sum(recent) / len(recent)
+                        ema_slow = sum(older) / len(older)
+                        direction = "rise" if ema_fast >= ema_slow else "fall"
+                    else:
+                        direction = "rise"
+                
+                # --- EXPIRAÇÃO DINÂMICA (VOLATILIDADE) ---
+                if not duration:
+                    if len(self.ai_tick_prices) >= 20:
+                        recent_diffs = []
+                        for i in range(-19, 0):
+                            prev = self.ai_tick_prices[i-1]
+                            curr = self.ai_tick_prices[i]
+                            recent_diffs.append(abs(curr - prev))
+                        volatility = sum(recent_diffs) / len(recent_diffs)
+                        avg_price = sum(self.ai_tick_prices[-20:]) / 20.0
+                        vol_ratio = volatility / (avg_price * 0.0001 + 1e-9)
+                        
+                        if vol_ratio < 0.3: # volatilidade ultra-baixa
+                            duration = 8
+                        elif vol_ratio < 0.6: # volatilidade baixa
+                            duration = 6
+                        elif vol_ratio > 1.5: # volatilidade ultra-alta
+                            duration = 3
+                        elif vol_ratio > 1.0: # volatilidade alta
+                            duration = 4
+                        else: # padrão
+                            duration = 5
+                        self.log(f"⚡ [Expiração Dinâmica] Volatilidade: {vol_ratio:.2f} -> Definindo expiração para {duration} ticks.")
+                    else:
+                        duration = self.config.get("deriv_rf_duration_value", 5)
+                
+                # Armazena a expiração dinâmica atual para o overlay
+                self.last_dynamic_duration = duration
+                if not duration_unit:
+                    duration_unit = self.config.get("deriv_rf_duration_unit", "t")
+                self.log(f"[API] Enviando ordem Rise/Fall -> Direcao: {direction.upper()} | Duracao: {duration}{duration_unit} | Stake: ${stake:.2f}")
+                success = self.api_client.buy_rise_fall(stake, direction, duration, duration_unit)
+                
             if success:
                 self.click_count += 1
                 self.on_click_cb(self.click_count)
@@ -1004,7 +1669,7 @@ class BotWorker(threading.Thread):
                 self.play_sound("click")
                 
                 # --- CICLOS DE ENTRADAS ---
-                if self.config.get("cycle_enabled", False):
+                if self.config.get("cycle_enabled", False) and self.config.get("mode") != "ai":
                     self.cycle_entries_count += 1
                     self.log(f"[Ciclos] Entrada registrada ({self.cycle_entries_count}/{self.config.get('cycle_max_entries', 4)} no ciclo atual)")
                     if self.cycle_entries_count >= self.config.get("cycle_max_entries", 4):
@@ -1055,7 +1720,7 @@ class BotWorker(threading.Thread):
             self.play_sound("click")
             
             # --- CICLOS DE ENTRADAS ---
-            if self.config.get("cycle_enabled", False):
+            if self.config.get("cycle_enabled", False) and self.config.get("mode") != "ai":
                 self.cycle_entries_count += 1
                 self.log(f"[Ciclos] Entrada registrada ({self.cycle_entries_count}/{self.config.get('cycle_max_entries', 4)} no ciclo atual)")
                 if self.cycle_entries_count >= self.config.get("cycle_max_entries", 4):
@@ -1147,6 +1812,7 @@ class BotWorker(threading.Thread):
                 if detected_win_pos:
                     if not self.win_detected_state and (now - self.last_win_time > 3.0):
                         self.win_count += 1
+                        self.martingale_level = 0
                         self.last_win_time = now
                         self.win_detected_state = True
                         
@@ -1156,6 +1822,8 @@ class BotWorker(threading.Thread):
                         # Atualiza Saldo Financeiro ($1.00 se for win2, senao win_value)
                         win_val = 1.00 if is_win2 else self.config.get("win_value", 1.50)
                         self.current_profit += win_val
+                        self.recent_ops.append(("WIN", win_val, datetime.datetime.now().strftime("%H:%M:%S")))
+                        self.recent_ops = self.recent_ops[-10:]
                         if self.on_finance_cb:
                             self.on_finance_cb(self.current_profit, self.click_count)
                         
@@ -1226,72 +1894,82 @@ class BotWorker(threading.Thread):
                 else:
                     if win_conf < (sens - 0.05):
                         self.win_detected_state = False
-                
-                # --- MONITOR DE LOSS ---
-                loss_pos, loss_conf = self._find_image_in_frame(screenshot_gray, loss_image_path, sens)
-                if loss_pos:
-                    if not self.loss_detected_state and (now - self.last_loss_time > 3.0):
-                        self.loss_count += 1
-                        self.last_loss_time = now
-                        self.loss_detected_state = True
-                        
-                        self.on_loss_cb(self.loss_count)
-                        
-                        self.adaptive_loss_count_since_relearn += 1
-                        if self.config.get("mode") == "adaptive":
-                            relearn_losses = self.config.get("adaptive_relearn_losses", 3)
-                            if self.adaptive_loss_count_since_relearn >= relearn_losses:
-                                self.log(f"Gatilho de reaprendizado: {relearn_losses} losses consecutivas atingidas.")
-                                self.relearn_strategy()
-                        
-                        # Atualiza Saldo Financeiro
-                        self.current_profit -= self.config.get("loss_value", 30.00)
-                        if self.on_finance_cb:
-                            self.on_finance_cb(self.current_profit, self.click_count)
+                    
+                    # --- MONITOR DE LOSS ---
+                    loss_pos, loss_conf = self._find_image_in_frame(screenshot_gray, loss_image_path, sens)
+                    if loss_pos:
+                        if not self.loss_detected_state and (now - self.last_loss_time > 3.0):
+                            self.loss_count += 1
+                            if not hasattr(self, "martingale_level"):
+                                self.martingale_level = 0
+                            self.martingale_level += 1
+                            self.last_loss_time = now
+                            self.loss_detected_state = True
                             
-                        self.log(f"LOSS detectado! (Confianca: {loss_conf:.2f}) - Losses Totais: {self.loss_count} | Saldo: ${self.current_profit:.2f}")
-                        self.play_sound("loss")
-                        self.save_result_to_history("LOSS")
-                        self.take_screenshot_from_frame(screenshot, "loss")
-                        
-                        # Notificacao Telegram Loss
-                        total_conclusion = self.win_count + self.loss_count
-                        rate = (self.win_count / total_conclusion * 100) if total_conclusion > 0 else 0.0
-                        loss_msg = (
-                            "🔴 <b>LOSS DETECTADO!</b>\n"
-                            "━━━━━━━━━━━━━━━━━━\n"
-                            "💔 <b>Resultado:</b> DERROTA!\n"
-                            f"🔥 <b>Confiança:</b> {loss_conf:.2f}\n"
-                            f"💰 <b>Saldo Atual:</b> ${self.current_profit:.2f}\n"
-                            "📊 <b>Placar Geral:</b>\n"
-                            f"├─ Wins: {self.win_count}\n"
-                            f"└─ Losses: {self.loss_count}\n"
-                            f"📈 <b>Assertividade:</b> {rate:.1f}%\n"
-                            "━━━━━━━━━━━━━━━━━━"
-                        )
-                        telegram_sender.send_telegram_msg(self.config, loss_msg, self.log)
-                        
-                        if self.config.get("enable_stop_loss", False) and self.loss_count >= self.config.get("stop_loss", 3):
-                            self.log(f"Limite Stop Loss atingido ({self.loss_count} Losses)! Parando bot...")
-                            self.on_stop_limit_cb("loss", self.loss_count)
+                            self.on_loss_cb(self.loss_count)
                             
-                            # Notificacao Telegram Stop Loss
-                            stop_loss_msg = (
-                                "⚠️ <b>STOP LOSS ALCANÇADO!</b>\n"
+                            # Treina imediatamente pós-loss no modo IA
+                            if self.config.get("mode") == "ai":
+                                self.force_ai_loss_learning()
+                            
+                            self.adaptive_loss_count_since_relearn += 1
+                            if self.config.get("mode") == "adaptive":
+                                relearn_losses = self.config.get("adaptive_relearn_losses", 3)
+                                if self.adaptive_loss_count_since_relearn >= relearn_losses:
+                                    self.log(f"Gatilho de reaprendizado: {relearn_losses} losses consecutivas atingidas.")
+                                    self.relearn_strategy()
+                            
+                            # Atualiza Saldo Financeiro
+                            loss_val = self.config.get("loss_value", 30.00)
+                            self.current_profit -= loss_val
+                            self.recent_ops.append(("LOSS", -loss_val, datetime.datetime.now().strftime("%H:%M:%S")))
+                            self.recent_ops = self.recent_ops[-10:]
+                            if self.on_finance_cb:
+                                self.on_finance_cb(self.current_profit, self.click_count)
+                                
+                            self.log(f"LOSS detectado! (Confianca: {loss_conf:.2f}) - Losses Totais: {self.loss_count} | Saldo: ${self.current_profit:.2f}")
+                            self.play_sound("loss")
+                            self.save_result_to_history("LOSS")
+                            self.take_screenshot_from_frame(screenshot, "loss")
+                            
+                            # Notificacao Telegram Loss
+                            total_conclusion = self.win_count + self.loss_count
+                            rate = (self.win_count / total_conclusion * 100) if total_conclusion > 0 else 0.0
+                            loss_msg = (
+                                "🔴 <b>LOSS DETECTADO!</b>\n"
                                 "━━━━━━━━━━━━━━━━━━\n"
-                                f"❌ <b>Limite de Perda:</b> {self.loss_count} Losses!\n"
-                                "🏁 <b>Estado:</b> Bot Finalizado (Proteção Ativa)\n"
-                                f"📈 <b>Assertividade Final:</b> {rate:.1f}%\n"
-                                "━━━━━━━━━━━━━━━━━━\n"
-                                "<i>Sessão finalizada. Controle de risco acionado!</i>"
+                                "💔 <b>Resultado:</b> DERROTA!\n"
+                                f"🔥 <b>Confiança:</b> {loss_conf:.2f}\n"
+                                f"💰 <b>Saldo Atual:</b> ${self.current_profit:.2f}\n"
+                                "📊 <b>Placar Geral:</b>\n"
+                                f"├─ Wins: {self.win_count}\n"
+                                f"└─ Losses: {self.loss_count}\n"
+                                f"📈 <b>Assertividade:</b> {rate:.1f}%\n"
+                                "━━━━━━━━━━━━━━━━━━"
                             )
-                            telegram_sender.send_telegram_msg(self.config, stop_loss_msg, self.log)
-                            time.sleep(2)  # aguarda envio do Telegram antes de parar
-                            self.stop_bot("loss")
-                            break
-                else:
-                    if loss_conf < (sens - 0.05):
-                        self.loss_detected_state = False
+                            telegram_sender.send_telegram_msg(self.config, loss_msg, self.log)
+                            
+                            if self.config.get("enable_stop_loss", False) and self.loss_count >= self.config.get("stop_loss", 3):
+                                self.log(f"Limite Stop Loss atingido ({self.loss_count} Losses)! Parando bot...")
+                                self.on_stop_limit_cb("loss", self.loss_count)
+                                
+                                # Notificacao Telegram Stop Loss
+                                stop_loss_msg = (
+                                    "⚠️ <b>STOP LOSS ALCANÇADO!</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━\n"
+                                    f"❌ <b>Limite de Perda:</b> {self.loss_count} Losses!\n"
+                                    "🏁 <b>Estado:</b> Bot Finalizado (Proteção Ativa)\n"
+                                    f"📈 <b>Assertividade Final:</b> {rate:.1f}%\n"
+                                    "━━━━━━━━━━━━━━━━━━\n"
+                                    "<i>Sessão finalizada. Controle de risco acionado!</i>"
+                                )
+                                telegram_sender.send_telegram_msg(self.config, stop_loss_msg, self.log)
+                                time.sleep(2)  # aguarda envio do Telegram antes de parar
+                                self.stop_bot("loss")
+                                break
+                    else:
+                        if loss_conf < (sens - 0.05):
+                            self.loss_detected_state = False
             except Exception:
                 pass
             
@@ -1309,7 +1987,8 @@ class BotWorker(threading.Thread):
         self.api_authorized = True
         self.last_api_tick_time = time.time()
         
-        if self.config.get("mode", "fixed") == "adaptive" and self.running:
+        mode = self.config.get("mode", "fixed")
+        if mode == "adaptive" and self.running:
             if is_crash:
                 if not self.adaptive_crashed:
                     self.adaptive_sequence.append("V")
@@ -1331,28 +2010,54 @@ class BotWorker(threading.Thread):
                 self.adaptive_event_count_since_relearn += 1
                 self.log(f"API Adaptativo: Evento 'G' registrado (Tick via API). Histórico: {len(self.adaptive_sequence)}")
                 self._trigger_relearn_if_needed()
+                
+        elif mode == "ai" and self.running:
+            # _process_ai_tick já contém toda a lógica de processamento e decisão de entrada
+            self._process_ai_tick(price, is_crash)
+
+    def _on_api_contract_update(self, poc):
+        status = poc.get("status")
+        is_sold = poc.get("is_sold", 0)
+        profit = float(poc.get("profit", 0.0))
+        contract_id = poc.get("contract_id")
+        
+        if self.config.get("mode") == "ai" and status == "open" and is_sold == 0:
+            take_profit_target = self.config.get("ai_contract_take_profit", 5.0)
+            if profit >= take_profit_target:
+                if self.ai_selling_contract_id != contract_id:
+                    self.ai_selling_contract_id = contract_id
+                    self.log(f"🎯 [Modo IA] Take Profit atingido no contrato: ${profit:.2f} >= ${take_profit_target:.2f}. Solicitando venda antecipada...")
+                    if self.api_client:
+                        self.api_client.sell_contract(contract_id)
 
     def _on_api_contract_status(self, status, profit):
         if not self.config.get("deriv_use_api_trading", False):
             return
-            
+
+        # Libera flag de contrato ativo (Modo IA)
+        self.ai_active_contract = False
+        self.ai_selling_contract_id = None
+
         self.log(f"[API] Resultado do Contrato: {status.upper()} (Lucro/Prejuízo: ${profit:.2f})")
-        
+
         now = time.time()
         total_conclusion = self.win_count + self.loss_count + 1
         rate = (self.win_count / total_conclusion * 100) if total_conclusion > 0 else 0.0
-        
+
         if status == "won":
             self.win_count += 1
+            self.martingale_level = 0
             self.on_win_cb(self.win_count)
             self.adaptive_loss_count_since_relearn = 0
             self.current_profit += profit
             if self.on_finance_cb:
                 self.on_finance_cb(self.current_profit, self.click_count)
-            
+
             self.log(f"VITÓRIA via API! Lucro: ${profit:.2f} | Saldo: ${self.current_profit:.2f}")
             self.play_sound("win")
             self.save_result_to_history("WIN")
+            self.recent_ops.append(("WIN", profit, datetime.datetime.now().strftime("%H:%M:%S")))
+            self.recent_ops = self.recent_ops[-10:]
             
             win_msg = (
                 f"🟢 <b>VITÓRIA via API DETECTADA!</b>\n"
@@ -1407,7 +2112,14 @@ class BotWorker(threading.Thread):
 
         elif status == "lost":
             self.loss_count += 1
+            if not hasattr(self, "martingale_level"):
+                self.martingale_level = 0
+            self.martingale_level += 1
             self.on_loss_cb(self.loss_count)
+            
+            # Treina imediatamente pós-loss no modo IA
+            if self.config.get("mode") == "ai":
+                self.force_ai_loss_learning()
             self.current_profit += profit # profit é negativo
             if self.on_finance_cb:
                 self.on_finance_cb(self.current_profit, self.click_count)
@@ -1415,6 +2127,8 @@ class BotWorker(threading.Thread):
             self.log(f"DERROTA via API! Perda: ${profit:.2f} | Saldo: ${self.current_profit:.2f}")
             self.play_sound("loss")
             self.save_result_to_history("LOSS")
+            self.recent_ops.append(("LOSS", profit, datetime.datetime.now().strftime("%H:%M:%S")))
+            self.recent_ops = self.recent_ops[-10:]
             
             loss_msg = (
                 f"🔴 <b>DERROTA via API DETECTADA!</b>\n"
@@ -1456,7 +2170,34 @@ class BotWorker(threading.Thread):
                 return
 
     def _on_api_history(self, prices):
-        if not prices or self.api_client.barrier_distance is None:
+        if not prices:
+            return
+            
+        # Pré-alimentação e treinamento da IA com histórico real
+        if self.config.get("mode") == "ai":
+            self.log(f"Processando {len(prices)} ticks históricos da API para pré-alimentar e treinar a IA...")
+            barrier = float(self.api_client.barrier_distance) if (self.api_client and self.api_client.barrier_distance is not None) else 0.0001
+            
+            # Limpa buffers da IA para evitar lixo residual
+            self.ai_tick_prices = []
+            self.ai_observations = []
+            self.ai_current_tick_index = 0
+            self.ai_last_crash_index = 0
+            
+            last_price = prices[0]
+            for p in prices:
+                is_crash = False
+                if last_price is not None and barrier > 0:
+                    if abs(p - last_price) >= barrier:
+                        is_crash = True
+                
+                self._process_ai_tick(p, is_crash)
+                last_price = p
+                
+            self.log(f"IA pré-alimentada com sucesso. Amostras na memória: {len(self.ai_replay.memory)}")
+            return
+            
+        if self.api_client.barrier_distance is None:
             return
             
         self.log(f"Processando {len(prices)} ticks históricos da API...")
@@ -1478,3 +2219,38 @@ class BotWorker(threading.Thread):
         
         self.adaptive_phase = "operation"
         self.relearn_strategy()
+
+    def force_ai_loss_learning(self):
+        contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+        self.log(f"🧠 [IA] Loss detectado no modo {contract_mode.upper()}! Iniciando treinamento de adaptação rápida pós-loss...")
+        
+        # Define status de aprendizado temporário para o overlay
+        self.ai_reasoning_status = "Adaptando Pós-Loss 🔧"
+        self.ai_reasoning_explanation = "A IA está executando 20 ciclos extras de aprendizado para ajustar os pesos da rede neural após o Loss."
+        
+        # Incrementa o contador de iterações de treino
+        if not hasattr(self, "ai_training_iterations"):
+            self.ai_training_iterations = 0
+            
+        if contract_mode in ["rise_fall", "accumulator"]:
+            if len(self.ai_replay.memory) >= 32:
+                # 20 ciclos extras de treinamento para adaptação rápida
+                for _ in range(20):
+                    X_batch, y_batch = self.ai_replay.sample_batch(32)
+                    loss_val = self.ai.train_on_batch(X_batch, y_batch)
+                    self.ai_training_iterations += 1
+                self.ai_loss = loss_val
+                self.ai_accuracy = self.ai_replay.get_accuracy(self.ai)
+                self.ai.save_weights(filepath=f"capturas/ai_weights_{contract_mode}.json")
+                self.log(f"🧠 [IA] Adaptação rápida concluída. Novo Loss: {self.ai_loss:.4f} | Acurácia: {self.ai_accuracy:.1f}%")
+        else: # matches, differs
+            if len(self.ai_digit_replay.memory) >= 32:
+                # 20 ciclos extras de treinamento para adaptação rápida
+                for _ in range(20):
+                    X_digit_batch, y_digit_batch = self.ai_digit_replay.sample_batch(32)
+                    digit_loss = self.digit_ai.train_on_batch(np.array(X_digit_batch, dtype=np.float32), np.array(y_digit_batch, dtype=np.int64))
+                    self.ai_training_iterations += 1
+                self.ai_loss = digit_loss
+                self.ai_accuracy = self.ai_digit_replay.get_accuracy(self.digit_ai)
+                self.digit_ai.save_weights()
+                self.log(f"🧠 [IA] Adaptação rápida de dígitos concluída. Novo Loss: {self.ai_loss:.4f} | Acurácia: {self.ai_accuracy:.1f}%")

@@ -52,7 +52,24 @@ DEFAULT_CONFIG = {
     "deriv_app_id": "1098",
     "deriv_symbol": "R_100",
     "deriv_growth_rate": 0.01,
-    "deriv_use_api_trading": False
+    "deriv_use_api_trading": False,
+    "deriv_account_type": "demo",
+    "ai_threshold": 75.0,
+    "ai_learning_rate": 0.01,
+    "ai_lookahead_ticks": 3,
+    "ai_use_gpu": True,
+    "ai_entry_cooldown": 10,
+    "ai_min_ticks_safe": 5,
+    "ai_contract_take_profit": 5.0,
+    "ai_min_samples_start": 500,
+    "deriv_contract_mode": "accumulator",
+    "deriv_rf_duration_unit": "t",
+    "deriv_rf_duration_value": 5,
+    "deriv_rf_auto_duration": True,
+    "llama_enabled": False,
+    "llama_url": "http://localhost:11434/api/generate",
+    "llama_model": "llama3",
+    "llama_provider": "ollama"
 }
 
 def load_config():

@@ -16,7 +16,8 @@ def main():
                 url,
                 width=1280,
                 height=850,
-                resizable=True
+                resizable=True,
+                maximized=True
             )
             webview.start(private_mode=False, storage_path=storage_dir)
             sys.exit(0)
