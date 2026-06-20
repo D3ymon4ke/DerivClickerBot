@@ -428,6 +428,68 @@ def extract_accumulator_features(tick_prices, last_crash_index, current_index, s
     return features
 
 
+def extract_rise_fall_features(tick_prices):
+    """
+    Função de Engenharia de Features específica para Rise/Fall com múltiplos timeframes.
+    Extrai exatamente 20 features focadas em tendências, momentum e volatilidade
+    de curto, médio e longo prazo (1m e 5m).
+    """
+    # Garante que temos pelo menos 151 preços (necessários para SMA 150)
+    if len(tick_prices) < 151:
+        first_val = tick_prices[0] if len(tick_prices) > 0 else 1.0
+        tick_prices = [first_val] * (151 - len(tick_prices)) + list(tick_prices)
+        
+    p_curr = tick_prices[-1]
+    
+    # 1. Log returns de curto prazo (últimos 5 ticks) -> 5 features
+    returns_5 = []
+    for i in range(-5, 0):
+        prev = tick_prices[i-1]
+        curr = tick_prices[i]
+        ret = np.log(curr / prev) if prev > 0 else 0.0
+        returns_5.append(ret * 10000.0)
+        
+    # 2. Retornos acumulados multi-escala -> 5 features
+    ret_10 = (np.log(p_curr / tick_prices[-11]) * 10000.0) if tick_prices[-11] > 0 else 0.0
+    ret_30 = (np.log(p_curr / tick_prices[-31]) * 10000.0) if tick_prices[-31] > 0 else 0.0
+    ret_60 = (np.log(p_curr / tick_prices[-61]) * 10000.0) if tick_prices[-61] > 0 else 0.0
+    ret_100 = (np.log(p_curr / tick_prices[-101]) * 10000.0) if tick_prices[-101] > 0 else 0.0
+    ret_150 = (np.log(p_curr / tick_prices[-151]) * 10000.0) if tick_prices[-151] > 0 else 0.0
+    
+    # 3. Cruzamento de Médias Móveis (SMA / Preço Atual) -> 4 features
+    sma_10_ratio = (sum(tick_prices[-10:]) / 10.0) / p_curr - 1.0
+    sma_30_ratio = (sum(tick_prices[-30:]) / 30.0) / p_curr - 1.0
+    sma_60_ratio = (sum(tick_prices[-60:]) / 60.0) / p_curr - 1.0
+    sma_150_ratio = (sum(tick_prices[-150:]) / 150.0) / p_curr - 1.0
+    
+    sma_features = [sma_10_ratio * 1000.0, sma_30_ratio * 1000.0, sma_60_ratio * 1000.0, sma_150_ratio * 1000.0]
+    
+    # 4. Volatilidade multi-escala (std dev de log returns de 1 tick) -> 3 features
+    rets_10 = [np.log(tick_prices[i] / tick_prices[i-1]) * 10000.0 for i in range(-10, 0)]
+    vol_10 = float(np.std(rets_10))
+    
+    rets_30 = [np.log(tick_prices[i] / tick_prices[i-1]) * 10000.0 for i in range(-30, 0)]
+    vol_30 = float(np.std(rets_30))
+    
+    rets_150 = [np.log(tick_prices[i] / tick_prices[i-1]) * 10000.0 for i in range(-150, 0)]
+    vol_150 = float(np.std(rets_150))
+    
+    # 5. Momentum e Direção de curtíssimo prazo -> 3 features
+    last_dir = 1.0 if returns_5[-1] > 1e-3 else (-1.0 if returns_5[-1] < -1e-3 else 0.0)
+    roc_5 = (p_curr - tick_prices[-6]) / (tick_prices[-6] + 1e-9) * 100.0
+    roc_15 = (p_curr - tick_prices[-16]) / (tick_prices[-16] + 1e-9) * 100.0
+    
+    features = (
+        returns_5 + 
+        [ret_10, ret_30, ret_60, ret_100, ret_150] + 
+        sma_features + 
+        [vol_10, vol_30, vol_150] + 
+        [last_dir, roc_5, roc_15]
+    )
+    
+    return features[:20]
+
+
 # ==========================================
 # 4. MODELO DE CLASSIFICAÇÃO DE DÍGITOS (MATCHES/DIFFERS)
 # ==========================================

@@ -1001,12 +1001,15 @@ class BotWorker(threading.Thread):
             self.sma_10 = None
             self.sma_30 = None
 
-        # Extrai features específicas do Accumulator (20 features)
-        features = ai_model.extract_accumulator_features(
-            self.ai_tick_prices, self.ai_last_crash_index, self.ai_current_tick_index, self.ai_survival_lengths
-        )
-
         contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+
+        # Extrai features específicas do modo de contrato
+        if contract_mode == "rise_fall":
+            features = ai_model.extract_rise_fall_features(self.ai_tick_prices)
+        else:
+            features = ai_model.extract_accumulator_features(
+                self.ai_tick_prices, self.ai_last_crash_index, self.ai_current_tick_index, self.ai_survival_lengths
+            )
 
         # Cria registro de observação pendente de rotulação para a IA principal
         obs = {
@@ -1026,6 +1029,10 @@ class BotWorker(threading.Thread):
             dur_unit = self.config.get("deriv_rf_duration_unit", "t")
             if dur_unit == "t":
                 K = int(dur_val)
+            elif dur_unit == "s":
+                K = max(1, int(dur_val / 2))
+            elif dur_unit == "m":
+                K = max(1, int(dur_val * 30))
                 
         for old_obs in self.ai_observations:
             if old_obs["label"] is None:
@@ -1049,8 +1056,9 @@ class BotWorker(threading.Thread):
                     self.ai_replay.add(old_obs["features"], label)
                     old_obs["label"] = label
 
-        # Limpa observações já rotuladas e antigas
-        self.ai_observations = [o for o in self.ai_observations if o["label"] is None or self.ai_current_tick_index - o["index"] < 50]
+        # Limpa observações já rotuladas e antigas (limite dinâmico para evitar deletar antes de rotular)
+        max_keep = max(50, K + 20)
+        self.ai_observations = [o for o in self.ai_observations if o["label"] is None or self.ai_current_tick_index - o["index"] < max_keep]
 
         # Registro e Rotulagem retroativa do DigitAI (1 tick lookahead)
         digit_obs = {
@@ -1630,27 +1638,33 @@ class BotWorker(threading.Thread):
                 
                 # --- EXPIRAÇÃO DINÂMICA (VOLATILIDADE) ---
                 if not duration:
-                    if len(self.ai_tick_prices) >= 20:
-                        recent_diffs = []
-                        for i in range(-19, 0):
-                            prev = self.ai_tick_prices[i-1]
-                            curr = self.ai_tick_prices[i]
-                            recent_diffs.append(abs(curr - prev))
-                        volatility = sum(recent_diffs) / len(recent_diffs)
-                        avg_price = sum(self.ai_tick_prices[-20:]) / 20.0
-                        vol_ratio = volatility / (avg_price * 0.0001 + 1e-9)
-                        
-                        if vol_ratio < 0.3: # volatilidade ultra-baixa
-                            duration = 8
-                        elif vol_ratio < 0.6: # volatilidade baixa
-                            duration = 6
-                        elif vol_ratio > 1.5: # volatilidade ultra-alta
-                            duration = 3
-                        elif vol_ratio > 1.0: # volatilidade alta
-                            duration = 4
-                        else: # padrão
-                            duration = 5
-                        self.log(f"⚡ [Expiração Dinâmica] Volatilidade: {vol_ratio:.2f} -> Definindo expiração para {duration} ticks.")
+                    is_auto = self.config.get("deriv_rf_auto_duration", True)
+                    unit = self.config.get("deriv_rf_duration_unit", "t")
+                    
+                    if is_auto and unit == "t":
+                        if len(self.ai_tick_prices) >= 20:
+                            recent_diffs = []
+                            for i in range(-19, 0):
+                                prev = self.ai_tick_prices[i-1]
+                                curr = self.ai_tick_prices[i]
+                                recent_diffs.append(abs(curr - prev))
+                            volatility = sum(recent_diffs) / len(recent_diffs)
+                            avg_price = sum(self.ai_tick_prices[-20:]) / 20.0
+                            vol_ratio = volatility / (avg_price * 0.0001 + 1e-9)
+                            
+                            if vol_ratio < 0.3: # volatilidade ultra-baixa
+                                duration = 8
+                            elif vol_ratio < 0.6: # volatilidade baixa
+                                duration = 6
+                            elif vol_ratio > 1.5: # volatilidade ultra-alta
+                                duration = 3
+                            elif vol_ratio > 1.0: # volatilidade alta
+                                duration = 4
+                            else: # padrão
+                                duration = 5
+                            self.log(f"⚡ [Expiração Dinâmica] Volatilidade: {vol_ratio:.2f} -> Definindo expiração para {duration} ticks.")
+                        else:
+                            duration = self.config.get("deriv_rf_duration_value", 5)
                     else:
                         duration = self.config.get("deriv_rf_duration_value", 5)
                 
