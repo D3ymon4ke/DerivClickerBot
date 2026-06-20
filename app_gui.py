@@ -582,6 +582,13 @@ class AppGui(ctk.CTk):
             else:
                 self.settings_switch_use_api.deselect()
 
+        if hasattr(self, "settings_switch_scan_market") and self.settings_switch_scan_market and self.settings_switch_scan_market.winfo_exists():
+            deriv_scan_market = self.config.get("deriv_scan_market", False)
+            if deriv_scan_market:
+                self.settings_switch_scan_market.select()
+            else:
+                self.settings_switch_scan_market.deselect()
+
         # Deriv Contract Mode and Rise/Fall options
         deriv_contract_mode = self.config.get("deriv_contract_mode", "accumulator")
         if hasattr(self, "settings_combo_contract_mode") and self.settings_combo_contract_mode and self.settings_combo_contract_mode.winfo_exists():
@@ -2466,6 +2473,8 @@ class AppGui(ctk.CTk):
         self.config["deriv_growth_rate"] = deriv_growth
         if hasattr(self, "settings_switch_use_api") and self.settings_switch_use_api and self.settings_switch_use_api.winfo_exists():
             self.config["deriv_use_api_trading"] = self.settings_switch_use_api.get() == 1
+        if hasattr(self, "settings_switch_scan_market") and self.settings_switch_scan_market and self.settings_switch_scan_market.winfo_exists():
+            self.config["deriv_scan_market"] = self.settings_switch_scan_market.get() == 1
         if hasattr(self, "settings_combo_api_account_type") and self.settings_combo_api_account_type and self.settings_combo_api_account_type.winfo_exists():
             self.config["deriv_account_type"] = self.settings_combo_api_account_type.get().strip().lower()
             
@@ -2690,6 +2699,9 @@ class AppGui(ctk.CTk):
         
         self.settings_switch_use_api = ctk.CTkSwitch(sec5_frame, text="Ativar Operações por API (Sem Cliques)", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
         self.settings_switch_use_api.pack(anchor="w", padx=15, pady=4)
+        
+        self.settings_switch_scan_market = ctk.CTkSwitch(sec5_frame, text="Pesquisar Melhor Ativo/Timeframe ao Iniciar", progress_color=ACCENT_GREEN, command=self._gui_setting_changed)
+        self.settings_switch_scan_market.pack(anchor="w", padx=15, pady=4)
         
         row_api_mode = ctk.CTkFrame(sec5_frame, fg_color="transparent")
         row_api_mode.pack(fill="x", padx=15, pady=6)
@@ -3791,6 +3803,26 @@ class AppGui(ctk.CTk):
                         self.lbl_next_click.configure(text="Escaneando...", text_color=ACCENT_BLUE)
         else:
             self.lbl_next_click.configure(text="Inativo", text_color="gray")
+            
+        # Sincroniza widgets com a config se o bot alterar dinamicamente (ex: no escaneamento automático)
+        if self.bot and self.bot.running:
+            # Sincroniza Ativo
+            current_symbol = self.config.get("deriv_symbol", "R_100")
+            if hasattr(self, "settings_combo_api_symbol") and self.settings_combo_api_symbol.winfo_exists():
+                if self.settings_combo_api_symbol.get() != current_symbol:
+                    self.settings_combo_api_symbol.set(current_symbol)
+            # Sincroniza Duração
+            if hasattr(self, "settings_entry_rf_duration") and self.settings_entry_rf_duration.winfo_exists():
+                config_val = str(self.config.get("deriv_rf_duration_value", 5))
+                if self.settings_entry_rf_duration.get() != config_val:
+                    self.settings_entry_rf_duration.delete(0, "end")
+                    self.settings_entry_rf_duration.insert(0, config_val)
+            # Sincroniza Unidade
+            if hasattr(self, "settings_combo_rf_unit") and self.settings_combo_rf_unit.winfo_exists():
+                config_unit = self.config.get("deriv_rf_duration_unit", "t")
+                unit_label = "Ticks" if config_unit == "t" else ("Segundos" if config_unit == "s" else "Minutos")
+                if self.settings_combo_rf_unit.get() != unit_label:
+                    self.settings_combo_rf_unit.set(unit_label)
             
         # Repassa alteracoes ao overlay em tempo real
         self._update_overlay_data()

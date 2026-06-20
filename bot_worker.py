@@ -1403,6 +1403,12 @@ class BotWorker(threading.Thread):
 
         self.log(f"✅ [Modo IA] API conectada! Conta: {self.config.get('deriv_account_type','demo').upper()} | Saldo: ${self.api_client.balance:.2f}")
 
+        # Executa pesquisa de mercado automática se ativada
+        if self.config.get("deriv_scan_market", False):
+            self._scan_best_asset_and_timeframe()
+            if not self.running:
+                return
+
         # Solicita histórico para pré-alimentar e treinar a IA antes de operar
         self.log("📊 [Modo IA] Solicitando histórico de ticks para pré-treinar a rede neural...")
         self.api_client.request_ticks_history(1000)
@@ -2187,6 +2193,10 @@ class BotWorker(threading.Thread):
         if not prices:
             return
             
+        if getattr(self, "is_scanning", False):
+            self.scan_history_prices = prices
+            return
+            
         # Pré-alimentação e treinamento da IA com histórico real
         if self.config.get("mode") == "ai":
             self.log(f"Processando {len(prices)} ticks históricos da API para pré-alimentar e treinar a IA...")
@@ -2268,3 +2278,165 @@ class BotWorker(threading.Thread):
                 self.ai_accuracy = self.ai_digit_replay.get_accuracy(self.digit_ai)
                 self.digit_ai.save_weights()
                 self.log(f"🧠 [IA] Adaptação rápida de dígitos concluída. Novo Loss: {self.ai_loss:.4f} | Acurácia: {self.ai_accuracy:.1f}%")
+
+    def _scan_best_asset_and_timeframe(self):
+        """
+        Pesquisa todos os ativos candidatos e timeframes,
+        identificando o melhor par para operar de acordo com o modo de contrato ativo.
+        """
+        if not self.api_client or not self.api_client.connected:
+            self.log("⚠️ [Pesquisa] API desconectada. Pulando pesquisa automática de mercado.")
+            return
+
+        self.log("🔍 [Pesquisa] Iniciando escaneamento automático de ativos e timeframes...")
+        self.ai_reasoning_status = "Pesquisando Ativos 🔍"
+        self.ai_reasoning_explanation = "Solicitando histórico de preços dos principais ativos para avaliar tendências e volatilidade..."
+
+        candidate_symbols = ["R_10", "R_25", "R_50", "R_75", "R_100", "1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V"]
+        contract_mode = self.config.get("deriv_contract_mode", "accumulator")
+
+        best_score = -1.0
+        best_symbol = self.config.get("deriv_symbol", "R_100")
+        best_val = self.config.get("deriv_rf_duration_value", 5)
+        best_unit = self.config.get("deriv_rf_duration_unit", "t")
+
+        # Temporariamente redireciona o callback de histórico
+        old_cb = self.api_client.on_history_cb
+        self.is_scanning = True
+        self.scan_history_prices = None
+
+        # Auxiliar para calcular Kaufmann Efficiency Ratio
+        def calculate_er(prices, K):
+            if len(prices) < K + 5:
+                return 0.0
+            ers = []
+            for offset in [0, max(5, K // 2), K]:
+                end_idx = len(prices) - 1 - offset
+                start_idx = end_idx - K
+                if start_idx < 0:
+                    continue
+                price_start = prices[start_idx]
+                price_end = prices[end_idx]
+                net_change = abs(price_end - price_start)
+                total_change = sum(abs(prices[i] - prices[i-1]) for i in range(start_idx + 1, end_idx + 1))
+                if total_change > 1e-9:
+                    ers.append(net_change / total_change)
+            return sum(ers) / len(ers) if ers else 0.0
+
+        for symbol in candidate_symbols:
+            if not self.running:
+                break
+            
+            self.log(f"🔍 [Pesquisa] Solicitando ticks de {symbol}...")
+            self.ai_reasoning_status = f"Analisando {symbol} 📊"
+            self.ai_reasoning_explanation = f"Avaliando a qualidade de sinal de {symbol} no modo {contract_mode.upper()}..."
+            
+            self.scan_history_prices = None
+            self.api_client.request_ticks_history(300, symbol=symbol)
+            
+            # Espera até 3 segundos pela resposta da API
+            waited = 0.0
+            while self.scan_history_prices is None and waited < 3.0 and self.running:
+                time.sleep(0.1)
+                waited += 0.1
+                
+            if not self.running:
+                break
+                
+            if self.scan_history_prices is None:
+                self.log(f"⚠️ [Pesquisa] Sem resposta de histórico para {symbol}. Pulando...")
+                continue
+                
+            prices = self.scan_history_prices
+            self.log(f"📊 [Pesquisa] Recebidos {len(prices)} ticks para {symbol}. Calculando métricas...")
+
+            if contract_mode == "rise_fall":
+                # Timeframes candidatos: 5 Ticks, 10 Ticks, 1m (30 Ticks), 5m (150 Ticks)
+                timeframes = [
+                    {"val": 5, "unit": "t", "K": 5, "label": "5 Ticks"},
+                    {"val": 10, "unit": "t", "K": 10, "label": "10 Ticks"},
+                    {"val": 1, "unit": "m", "K": 30, "label": "1 Minuto"},
+                    {"val": 5, "unit": "m", "K": 150, "label": "5 Minutos"}
+                ]
+                for tf in timeframes:
+                    score = calculate_er(prices, tf["K"])
+                    self.log(f"   > Timeframe {tf['label']}: Score de Tendência (ER) = {score:.4f}")
+                    if score > best_score:
+                        best_score = score
+                        best_symbol = symbol
+                        best_val = tf["val"]
+                        best_unit = tf["unit"]
+                        
+            elif contract_mode in ["matches", "differs"]:
+                # Mede viés/concentração de dígitos nos últimos 150 ticks
+                if len(prices) >= 150:
+                    last_prices = prices[-150:]
+                    digits = []
+                    for p in last_prices:
+                        p_str = f"{p:.5f}" # garante precisão decimal
+                        if "." in p_str:
+                            digits.append(int(p_str.split(".")[-1][-1]))
+                        else:
+                            digits.append(int(p_str[-1]))
+                    
+                    # Desvio padrão das frequências de dígitos de 0 a 9 (uniforme seria 10% cada)
+                    counts = [digits.count(d) for d in range(10)]
+                    freqs = [c / len(digits) for c in counts]
+                    score = float(np.std(freqs))
+                    self.log(f"   > Score de Viés de Dígito (Std Dev) = {score:.4f}")
+                    if score > best_score:
+                        best_score = score
+                        best_symbol = symbol
+                        best_val = 5  # padrão 5 ticks para dígitos
+                        best_unit = "t"
+                else:
+                    self.log("   > Histórico de ticks insuficiente para análise de dígitos.")
+
+            else: # accumulator
+                # Mede a estabilidade (inverso da volatilidade) para sequências maiores
+                if len(prices) >= 100:
+                    diffs = [abs(prices[i] - prices[i-1]) for i in range(1, len(prices))]
+                    volatility = sum(diffs) / len(diffs)
+                    avg_price = sum(prices) / len(prices)
+                    vol_ratio = volatility / (avg_price * 0.0001 + 1e-9)
+                    
+                    score = 1.0 / (vol_ratio + 1e-6)
+                    self.log(f"   > Score de Estabilidade = {score:.4f}")
+                    if score > best_score:
+                        best_score = score
+                        best_symbol = symbol
+                        best_val = 5
+                        best_unit = "t"
+            
+            time.sleep(0.1)
+
+        # Restaura o callback
+        self.api_client.on_history_cb = old_cb
+        self.is_scanning = False
+
+        if best_score > -1.0:
+            self.log(f"🎯 [Pesquisa] VENCEDOR: {best_symbol} | Timeframe: {best_val}{best_unit} | Score: {best_score:.4f}")
+            
+            # Atualiza configurações na memória
+            self.config["deriv_symbol"] = best_symbol
+            self.config["deriv_rf_duration_value"] = best_val
+            self.config["deriv_rf_duration_unit"] = best_unit
+            
+            # Atualiza o ativo na API
+            self.api_client.change_symbol(best_symbol)
+            
+            # Envia notificação no Telegram
+            timeframe_label = f"{best_val} Ticks" if best_unit == "t" else (f"{best_val} Segundos" if best_unit == "s" else f"{best_val} Minutos")
+            telegram_msg = (
+                "🎯 <b>Pesquisa de Mercado Concluída!</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                f"📊 <b>Modo:</b> {contract_mode.upper()}\n"
+                f"🟢 <b>Melhor Ativo:</b> {best_symbol}\n"
+                f"⏱️ <b>Timeframe:</b> {timeframe_label}\n"
+                f"📈 <b>Score de Qualidade:</b> {best_score:.4f}\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "<i>Configuração aplicada automaticamente ao robô!</i>"
+            )
+            telegram_sender.send_telegram_msg(self.config, telegram_msg, self.log)
+        else:
+            self.log("⚠️ [Pesquisa] Não foi possível encontrar um vencedor claro. Mantendo configurações originais.")

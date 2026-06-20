@@ -377,13 +377,13 @@ class DerivApiClient:
             self.log(f"Erro ao enviar buy digits via API: {e}")
             return False
 
-    def request_ticks_history(self, count=1000):
+    def request_ticks_history(self, count=1000, symbol=None):
         if not self.connected or not self.authorized:
             self.log("Erro: API não conectada para puxar histórico.")
             return False
             
         req = {
-            "ticks_history": self.symbol,
+            "ticks_history": symbol or self.symbol,
             "end": "latest",
             "count": int(count),
             "style": "ticks"
@@ -394,3 +394,15 @@ class DerivApiClient:
         except Exception as e:
             self.log(f"Erro ao solicitar histórico de ticks: {e}")
             return False
+
+    def change_symbol(self, new_symbol):
+        if self.symbol == new_symbol:
+            return
+        self.log(f"Alterando ativo da API: {self.symbol} -> {new_symbol}")
+        try:
+            self.ws.send(json.dumps({"forget_all": "ticks"}))
+        except Exception:
+            pass
+        self.symbol = new_symbol
+        self._subscribe_ticks()
+        self._request_proposal()
